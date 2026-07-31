@@ -3,9 +3,8 @@ import pandas as pd
 import streamlit as st
 
 # ==========================================
-# 1. DATABASE SETUP (SAFE INITIALIZATION)
+# 1. DATABASE SETUP (SAFE & PRESERVES YOUR DATA)
 # ==========================================
-# Connects to your existing 'inventory.db' without wiping or resetting data
 conn = sqlite3.connect("inventory.db", check_same_thread=False)
 c = conn.cursor()
 
@@ -101,7 +100,7 @@ if role == "Custodian View":
                     st.success(f"Added {stock} copies of '{title}'!")
                     st.rerun()
 
-        # --- B. DISPATCH BOOKS GRID (ORDERED DESCENDING) ---
+        # --- B. DISPATCH BOOKS GRID (FIXED QUANTITY PRESERVATION) ---
         with col2:
             st.subheader("Dispatch Books to Schools")
             master_df = pd.read_sql_query(
@@ -153,6 +152,7 @@ if role == "Custodian View":
 
                     input_key = f"dispatch_qty_{selected_book}_{idx}"
 
+                    # Keep default encoded value persistent in session state
                     if input_key not in st.session_state:
                         st.session_state[input_key] = 10
 
@@ -164,7 +164,7 @@ if role == "Custodian View":
                         label_visibility="collapsed",
                     )
 
-                    live_total_requested += st.session_state[input_key]
+                    live_total_requested += qty
 
                     dispatch_selections.append(
                         {
@@ -477,14 +477,14 @@ if role == "Custodian View":
         st.info("Please enter the custodian password above to unlock controls.")
 
 # ==========================================
-# 4. PRINCIPAL VIEW (PUBLIC - ORDERED DESCENDING BY DEFAULT)
+# 4. PRINCIPAL VIEW (PUBLIC - DEFAULT DESCENDING ORDER)
 # ==========================================
 else:
     st.header("Principal Portal")
 
     selected_school = st.selectbox("Select Your School:", SCHOOL_LIST)
 
-    # UPDATED QUERY: Sorts default table by Book Title DESCENDING
+    # Sorts the table by Book Title DESCENDING by default
     school_df = pd.read_sql_query(
         """SELECT 
             book_title AS 'Book Title', 
