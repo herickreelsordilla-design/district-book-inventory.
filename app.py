@@ -92,7 +92,7 @@ if role == "Custodian View":
                     st.success(f"Added {stock} copies of '{title}'!")
                     st.rerun()
 
-        # 2. Dispatch Books Grid
+        # 2. Dispatch Books Grid (SINGLE DROPDOWN UPDATE)
         with col2:
             st.subheader("Dispatch Books to Schools")
             master_df = pd.read_sql_query(
@@ -106,23 +106,36 @@ if role == "Custodian View":
             else:
                 book_options = master_df["book_title"].tolist()
 
-                h1, h2, h3, h4 = st.columns([2.5, 3, 2, 2])
+                # SINGLE DROPDOWN AT THE TOP
+                selected_book = st.selectbox(
+                    "📌 Select Book Title to Dispatch:",
+                    book_options,
+                    key="global_dispatch_book",
+                )
+
+                # Get available stock for selected book
+                current_stock = master_df.loc[
+                    master_df["book_title"] == selected_book, "central_stock"
+                ].values[0]
+
+                st.caption(
+                    f"**Available Warehouse Stock:** `{current_stock}` copies"
+                )
+
+                st.divider()
+
+                # Grid Header
+                h1, h2, h3 = st.columns([3, 2, 2])
                 h1.markdown("**School Name**")
-                h2.markdown("**Select Book**")
-                h3.markdown("**Quantity**")
-                h4.markdown("**Action**")
+                h2.markdown("**Quantity**")
+                h3.markdown("**Action**")
                 st.divider()
 
                 for idx, school in enumerate(SCHOOL_LIST):
-                    c1, c2, c3, c4 = st.columns([2.5, 3, 2, 2])
-                    c1.write(school)
-                    selected_book = c2.selectbox(
-                        f"Book for {school}",
-                        book_options,
-                        key=f"dispatch_book_{idx}",
-                        label_visibility="collapsed",
-                    )
-                    qty = c3.number_input(
+                    c1, c2, c3 = st.columns([3, 2, 2])
+                    c1.write(f"**{school}**")
+
+                    qty = c2.number_input(
                         f"Qty for {school}",
                         min_value=1,
                         step=1,
@@ -131,14 +144,9 @@ if role == "Custodian View":
                         label_visibility="collapsed",
                     )
 
-                    if c4.button(
+                    if c3.button(
                         "Dispatch", key=f"dispatch_btn_{idx}", type="primary"
                     ):
-                        current_stock = master_df.loc[
-                            master_df["book_title"] == selected_book,
-                            "central_stock",
-                        ].values[0]
-
                         if qty > current_stock:
                             st.error(
                                 f"Not enough stock! Only {current_stock} available."
@@ -154,13 +162,13 @@ if role == "Custodian View":
                             )
                             conn.commit()
                             st.success(
-                                f"Dispatched {qty} of '{selected_book}' to {school}!"
+                                f"Dispatched {qty} copies of '{selected_book}' to {school}!"
                             )
                             st.rerun()
 
         st.divider()
 
-        # Display Data Tabs (Includes New Tab 4 for Individual Book Tracking)
+        # Display Data Tabs
         tab1, tab2, tab3, tab4 = st.tabs(
             [
                 "📊 Central Warehouse Stock",
@@ -248,7 +256,7 @@ if role == "Custodian View":
                             )
                             st.rerun()
 
-        # TAB 3: NEW INDIVIDUAL BOOK TITLE TRACKER
+        # TAB 3: INDIVIDUAL BOOK TITLE TRACKER
         with tab3:
             st.subheader("📖 Book Title Distribution Tracker")
 
@@ -267,13 +275,11 @@ if role == "Custodian View":
                 )
 
                 if selected_title:
-                    # Get warehouse stock
                     central_stock = master_df.loc[
                         master_df["book_title"] == selected_title,
                         "central_stock",
                     ].values[0]
 
-                    # Get dispatched data for this book
                     book_dispatches = pd.read_sql_query(
                         "SELECT school_name AS 'School Name', quantity_received AS 'Quantity', status AS 'Status' FROM school_inventory WHERE book_title = ?",
                         conn,
@@ -286,7 +292,6 @@ if role == "Custodian View":
                         else 0
                     )
 
-                    # Summary Metrics Display
                     m1, m2, m3 = st.columns(3)
                     m1.metric("Central Warehouse Stock", central_stock)
                     m2.metric("Total Dispatched to Schools", total_dispatched)
