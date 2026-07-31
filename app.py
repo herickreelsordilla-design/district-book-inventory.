@@ -5,6 +5,7 @@ import streamlit as st
 # ==========================================
 # 1. DATABASE SETUP (SAFE INITIALIZATION)
 # ==========================================
+# Connects to your existing 'inventory.db' without wiping or resetting data
 conn = sqlite3.connect("inventory.db", check_same_thread=False)
 c = conn.cursor()
 
@@ -100,11 +101,11 @@ if role == "Custodian View":
                     st.success(f"Added {stock} copies of '{title}'!")
                     st.rerun()
 
-        # --- B. DISPATCH BOOKS GRID (WITH INSTANT LIVE MONITORING & UNIQUE KEYS) ---
+        # --- B. DISPATCH BOOKS GRID (ORDERED DESCENDING) ---
         with col2:
             st.subheader("Dispatch Books to Schools")
             master_df = pd.read_sql_query(
-                "SELECT * FROM master_inventory", conn
+                "SELECT * FROM master_inventory ORDER BY book_title DESC", conn
             )
 
             if master_df.empty:
@@ -152,7 +153,6 @@ if role == "Custodian View":
 
                     input_key = f"dispatch_qty_{selected_book}_{idx}"
 
-                    # Initialize default session state value if not yet present
                     if input_key not in st.session_state:
                         st.session_state[input_key] = 10
 
@@ -164,7 +164,6 @@ if role == "Custodian View":
                         label_visibility="collapsed",
                     )
 
-                    # Dynamic Monitoring Accumulator
                     live_total_requested += st.session_state[input_key]
 
                     dispatch_selections.append(
@@ -174,7 +173,6 @@ if role == "Custodian View":
                         }
                     )
 
-                    # Individual Dispatch Button with Unique Key
                     if c3.button("Dispatch", key=f"dispatch_btn_{selected_book}_{idx}"):
                         if qty > current_stock:
                             st.error(
@@ -248,7 +246,7 @@ if role == "Custodian View":
         # TAB 1: Warehouse Stock
         with tab1:
             st.subheader("📊 Central Warehouse Stock")
-            central_df = pd.read_sql_query("SELECT * FROM master_inventory", conn)
+            central_df = pd.read_sql_query("SELECT * FROM master_inventory ORDER BY book_title DESC", conn)
 
             if central_df.empty:
                 st.info("No books in central warehouse stock.")
@@ -277,7 +275,7 @@ if role == "Custodian View":
             st.subheader("Manage Dispatched Inventory")
 
             dispatched_df = pd.read_sql_query(
-                "SELECT rowid AS id, school_name, book_title, quantity_received, status FROM school_inventory",
+                "SELECT rowid AS id, school_name, book_title, quantity_received, status FROM school_inventory ORDER BY book_title DESC",
                 conn,
             )
 
@@ -360,7 +358,7 @@ if role == "Custodian View":
             st.write("Manage or wipe specific dispatched records from the system.")
 
             dispatched_df = pd.read_sql_query(
-                "SELECT rowid AS id, school_name, book_title, quantity_received, status FROM school_inventory",
+                "SELECT rowid AS id, school_name, book_title, quantity_received, status FROM school_inventory ORDER BY book_title DESC",
                 conn,
             )
 
@@ -413,7 +411,7 @@ if role == "Custodian View":
             st.subheader("📖 Book Title Distribution Tracker")
 
             master_df = pd.read_sql_query(
-                "SELECT * FROM master_inventory", conn
+                "SELECT * FROM master_inventory ORDER BY book_title DESC", conn
             )
 
             if master_df.empty:
@@ -479,26 +477,26 @@ if role == "Custodian View":
         st.info("Please enter the custodian password above to unlock controls.")
 
 # ==========================================
-# 4. PRINCIPAL VIEW (PUBLIC)
+# 4. PRINCIPAL VIEW (PUBLIC - ORDERED DESCENDING BY DEFAULT)
 # ==========================================
 else:
     st.header("Principal Portal")
 
     selected_school = st.selectbox("Select Your School:", SCHOOL_LIST)
 
-    # Grouped query with TRIM to prevent missing books due to whitespace discrepancies
-school_df = pd.read_sql_query(
-    """SELECT 
-        book_title AS 'Book Title', 
-        SUM(quantity_received) AS 'Total Quantity Allocated', 
-        status AS 'Status' 
-       FROM school_inventory 
-       WHERE TRIM(school_name) = TRIM(?)
-       GROUP BY book_title, status
-       ORDER BY book_title DESC""",
-    conn,
-    params=(selected_school,),
-)
+    # UPDATED QUERY: Sorts default table by Book Title DESCENDING
+    school_df = pd.read_sql_query(
+        """SELECT 
+            book_title AS 'Book Title', 
+            SUM(quantity_received) AS 'Total Quantity Allocated', 
+            status AS 'Status' 
+           FROM school_inventory 
+           WHERE TRIM(school_name) = TRIM(?)
+           GROUP BY book_title, status
+           ORDER BY book_title DESC""",
+        conn,
+        params=(selected_school,),
+    )
 
     st.subheader(f"📦 Incoming / Assigned Books for {selected_school}")
     if school_df.empty:
