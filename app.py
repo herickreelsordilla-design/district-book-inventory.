@@ -92,7 +92,7 @@ if role == "Custodian View":
                     st.success(f"Added {stock} copies of '{title}'!")
                     st.rerun()
 
-        # 2. DISPATCH BOOKS GRID WITH MASTER DROP BAR + ROW DROPDOWNS
+        # 2. DISPATCH BOOKS GRID WITH "SELECT BOOK" DROP BAR PER ROW
         with col2:
             st.subheader("Dispatch Books to Schools")
             master_df = pd.read_sql_query(
@@ -106,19 +106,6 @@ if role == "Custodian View":
             else:
                 book_options = master_df["book_title"].tolist()
 
-                # MASTER DROP BAR TO PRE-FILL ALL ROWS
-                m_col1, m_col2 = st.columns([3, 1])
-                default_book = m_col1.selectbox(
-                    "📖 Select Default Book Title (Applies to all drop bars below):",
-                    book_options,
-                    key="master_book_dropbar",
-                )
-                dispatch_all_btn = m_col2.button(
-                    "⚡ Batch Dispatch All", type="primary", use_container_width=True
-                )
-
-                st.divider()
-
                 # Table Header
                 h1, h2, h3, h4 = st.columns([2.5, 3, 2, 2])
                 h1.markdown("**School Name**")
@@ -127,24 +114,14 @@ if role == "Custodian View":
                 h4.markdown("**Action**")
                 st.divider()
 
-                # Find default index for dropbar options
-                default_idx = (
-                    book_options.index(default_book)
-                    if default_book in book_options
-                    else 0
-                )
-
-                dispatch_selections = []
-
                 for idx, school in enumerate(SCHOOL_LIST):
                     c1, c2, c3, c4 = st.columns([2.5, 3, 2, 2])
                     c1.write(f"**{school}**")
 
-                    # Dropdown bar per row, defaults to master dropbar selection
+                    # Dropdown ("drop bar") for selecting book title for each row
                     selected_book = c2.selectbox(
                         f"Book for {school}",
                         book_options,
-                        index=default_idx,
                         key=f"dispatch_book_{idx}",
                         label_visibility="collapsed",
                     )
@@ -158,17 +135,8 @@ if role == "Custodian View":
                         label_visibility="collapsed",
                     )
 
-                    dispatch_selections.append(
-                        {
-                            "school": school,
-                            "book": selected_book,
-                            "qty": qty,
-                        }
-                    )
-
-                    # Individual Dispatch Button
                     if c4.button(
-                        "Dispatch", key=f"dispatch_btn_{idx}"
+                        "Dispatch", key=f"dispatch_btn_{idx}", type="primary"
                     ):
                         current_stock = master_df.loc[
                             master_df["book_title"] == selected_book,
@@ -193,41 +161,6 @@ if role == "Custodian View":
                                 f"Dispatched {qty} copies of '{selected_book}' to {school}!"
                             )
                             st.rerun()
-
-                # BATCH DISPATCH LOGIC
-                if dispatch_all_btn:
-                    req_by_book = {}
-                    for item in dispatch_selections:
-                        b = item["book"]
-                        q = item["qty"]
-                        req_by_book[b] = req_by_book.get(b, 0) + q
-
-                    has_stock_error = False
-                    for b_title, req_qty in req_by_book.items():
-                        avail = master_df.loc[
-                            master_df["book_title"] == b_title, "central_stock"
-                        ].values[0]
-                        if req_qty > avail:
-                            st.error(
-                                f"Cannot batch dispatch! Required `{req_qty}` copies of **{b_title}**, but only `{avail}` available in stock."
-                            )
-                            has_stock_error = True
-
-                    if not has_stock_error:
-                        for item in dispatch_selections:
-                            c.execute(
-                                "UPDATE master_inventory SET central_stock = central_stock - ? WHERE book_title = ?",
-                                (item["qty"], item["book"]),
-                            )
-                            c.execute(
-                                "INSERT INTO school_inventory (school_name, book_title, quantity_received, status) VALUES (?, ?, ?, 'Pending')",
-                                (item["school"], item["book"], item["qty"]),
-                            )
-                        conn.commit()
-                        st.success(
-                            f"Successfully batch dispatched books to all {len(SCHOOL_LIST)} schools!"
-                        )
-                        st.rerun()
 
         st.divider()
 
