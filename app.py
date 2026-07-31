@@ -6,6 +6,7 @@ import streamlit as st
 conn = sqlite3.connect("inventory.db", check_same_thread=False)
 c = conn.cursor()
 
+# Create tables for Master Inventory, School Allocations, and Messages/Appointments
 c.execute(
     """CREATE TABLE IF NOT EXISTS master_inventory 
              (book_title TEXT PRIMARY KEY, central_stock INTEGER)"""
@@ -14,6 +15,10 @@ c.execute(
     """CREATE TABLE IF NOT EXISTS school_inventory 
              (school_name TEXT, book_title TEXT, quantity_received INTEGER, status TEXT, 
               PRIMARY KEY (school_name, book_title))"""
+)
+c.execute(
+    """CREATE TABLE IF NOT EXISTS appointments 
+             (id INTEGER PRIMARY KEY AUTOINCREMENT, school_name TEXT, date TEXT, message TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)"""
 )
 conn.commit()
 
@@ -35,8 +40,8 @@ if role == "Custodian View":
         "Enter Custodian Password to Access:", type="password"
     )
 
-    # Change "admin123" to whatever secret password you want!
-    CUSTODIAN_PASSWORD = "adminHERICKreel"
+    # Change "admin123" to your preferred password
+    CUSTODIAN_PASSWORD = "admin123"
 
     if password == CUSTODIAN_PASSWORD:
         st.success("Access Granted!")
@@ -99,8 +104,8 @@ if role == "Custodian View":
                                 (dispatch_qty, selected_book),
                             )
                             c.execute(
-                                "INSERT INTO school_inventory (school_name, book_title, quantity_received, status) VALUES (?, ?, ?, 'Pending') "
-                                "ON CONFLICT(school_name, book_title) DO UPDATE SET quantity_received = quantity_received + ?, status = 'Pending'",
+                                "INSERT INTO school_inventory (school_name, book_title, quantity_received, status) VALUES (?, ?, ?, 'Dispatched') "
+                                "ON CONFLICT(school_name, book_title) DO UPDATE SET quantity_received = quantity_received + ?",
                                 (
                                     school_name.strip(),
                                     selected_book,
@@ -116,18 +121,36 @@ if role == "Custodian View":
 
         st.divider()
 
-        # Display Tables
-        st.subheader("📊 Central Warehouse Stock")
-        st.dataframe(
-            pd.read_sql_query("SELECT * FROM master_inventory", conn),
-            use_container_width=True,
+        # Display Data Tables
+        tab1, tab2, tab3 = st.tabs(
+            [
+                "📊 Central Warehouse Stock",
+                "🚚 Dispatched Inventory Log",
+                "📅 Scheduled Appointments / Messages",
+            ]
         )
 
-        st.subheader("🚚 Dispatched Inventory Log")
-        st.dataframe(
-            pd.read_sql_query("SELECT * FROM school_inventory", conn),
-            use_container_width=True,
-        )
+        with tab1:
+            st.dataframe(
+                pd.read_sql_query("SELECT * FROM master_inventory", conn),
+                use_container_width=True,
+            )
+
+        with tab2:
+            st.dataframe(
+                pd.read_sql_query("SELECT * FROM school_inventory", conn),
+                use_container_width=True,
+            )
+
+        with tab3:
+            appointments_df = pd.read_sql_query(
+                "SELECT school_name AS 'School', date AS 'Requested Date', message AS 'Message / Reason', timestamp AS 'Sent At' FROM appointments ORDER BY id DESC",
+                conn,
+            )
+            if not appointments_df.empty:
+                st.dataframe(appointments_df, use_container_width=True)
+            else:
+                st.info("No appointment requests or messages yet.")
 
     elif password != "":
         st.error("Incorrect Password. Access Denied.")
@@ -150,7 +173,7 @@ else:
         selected_school = st.selectbox("Select Your School:", all_schools)
 
         school_df = pd.read_sql_query(
-            "SELECT book_title, quantity_received, status FROM school_inventory WHERE school_name = ?",
+            "SELECT book_title AS 'Book Title', quantity_received AS 'Quantity Allocated' FROM school_inventory WHERE school_name = ?",
             conn,
             params=(selected_school,),
         )
@@ -158,20 +181,31 @@ else:
         st.subheader(f"Incoming / Assigned Books for {selected_school}")
         st.dataframe(school_df, use_container_width=True)
 
-        pending_books = school_df[school_df["status"] == "Pending"][
-            "book_title"
-        ].tolist()
+        st.divider()
 
-        if pending_books:
-            st.subheader("Acknowledge Delivery")
-            book_to_confirm = st.selectbox(
-                "Select book received:", pending_books
+        # NEW: SCHEDULE AN APPOINTMENT / MESSAGE SECTION
+        st.subheader("📅 Schedule an Appointment / Message Custodian")
+        st.write(
+            "Need to pick up books, make a request, or schedule a meeting? Send a message below."
+        )
+
+        with st.form("appointment_form"):
+            appt_date = st.date_input("Preferred Appointment Date")
+            message = st.text_area(
+                "Message / Notes for Custodian",
+                placeholder="e.g., Requesting to pick up 30 extra Grade 2 Math books this Thursday at 10:00 AM.",
             )
-            if st.button("Confirm Receipt"):
-                c.execute(
-                    "UPDATE school_inventory SET status = 'Received' WHERE school_name = ? AND book_title = ?",
-                    (selected_school, book_to_confirm),
-                )
-                conn.commit()
-                st.success(f"Status for '{book_to_confirm}' updated to Received!")
-                st.rerun()
+            submit_appt = st.form_submit_button("Send Request to Custodian")
+
+            if submit_appt:
+                if message.strip() == "":
+                    st.warning("Please enter a message before sending.")
+                else:
+                    c.execute(
+                        "INSERT INTO appointments (school_name, date, message) VALUES (?, ?, ?)",
+                        (selected_school, str(appt_date), message.strip()),
+                    )
+                    conn.commit()
+                    st.success(
+                        "Your appointment request/message has been sent to the Custodian!"
+                    )
