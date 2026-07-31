@@ -11,12 +11,11 @@ c.execute(
              (book_title TEXT PRIMARY KEY, central_stock INTEGER)"""
 )
 
-# Check if old table exists without 'id' column and upgrade it safely
+# Auto-upgrade database structure if missing ID column
 c.execute("PRAGMA table_info(school_inventory)")
 columns = [column[1] for column in c.fetchall()]
 
 if "id" not in columns and len(columns) > 0:
-    # Drop old table format so it can be recreated with ID
     c.execute("DROP TABLE school_inventory")
 
 c.execute(
@@ -66,7 +65,7 @@ if role == "Custodian View":
     password = st.text_input(
         "Enter Custodian Password to Access:", type="password"
     )
-    CUSTODIAN_PASSWORD = "admin123"  # Change this to your preferred password!
+    CUSTODIAN_PASSWORD = "admin123"  # Change this password as needed
 
     if password == CUSTODIAN_PASSWORD:
         st.success("Access Granted!")
@@ -165,7 +164,7 @@ if role == "Custodian View":
         tab1, tab2, tab3 = st.tabs(
             [
                 "📊 Central Warehouse Stock",
-                "🚚 Interactive Dispatched Inventory Log",
+                "🚚 Dispatched Inventory Log",
                 "📅 Scheduled Appointments / Messages",
             ]
         )
@@ -176,7 +175,7 @@ if role == "Custodian View":
                 use_container_width=True,
             )
 
-        # INTERACTIVE DISPATCHED INVENTORY LOG
+        # CLEAN DISPATCHED INVENTORY LOG
         with tab2:
             st.subheader("Manage Dispatched Inventory")
             dispatched_df = pd.read_sql_query(
@@ -195,8 +194,8 @@ if role == "Custodian View":
                 col_sch, col_bk, col_qty, col_st, col_act = st.columns(
                     [2.5, 3, 1.5, 1.5, 2]
                 )
-                col_sch.markdown("**List of Schools**")
-                col_bk.markdown("**Select Book (option bar)**")
+                col_sch.markdown("**School Name**")
+                col_bk.markdown("**Book Allocated**")
                 col_qty.markdown("**Quantity / Edit**")
                 col_st.markdown("**Status**")
                 col_act.markdown("**Actions**")
@@ -213,21 +212,12 @@ if role == "Custodian View":
                         [2.5, 3, 1.5, 1.5, 2]
                     )
 
-                    c_sch.write(r_school)
+                    c_sch.write(f"**{r_school}**")
 
-                    # Option bar to edit book title if mistake was made
-                    book_idx = (
-                        all_books.index(r_book) if r_book in all_books else 0
-                    )
-                    updated_book = c_bk.selectbox(
-                        f"Book {r_id}",
-                        all_books,
-                        index=book_idx,
-                        key=f"edit_bk_{r_id}",
-                        label_visibility="collapsed",
-                    )
+                    # Display clean text instead of continuous dropdowns
+                    c_bk.write(r_book)
 
-                    # Number box to edit quantity directly
+                    # Number box to edit quantity directly if needed
                     updated_qty = c_qty.number_input(
                         f"Qty {r_id}",
                         min_value=1,
@@ -244,20 +234,20 @@ if role == "Custodian View":
 
                     btn_col1, btn_col2 = c_act.columns(2)
 
-                    # 1. Save Edit Button
-                    if (updated_book != r_book) or (updated_qty != r_qty):
+                    # 1. Save Edit Button (triggers if quantity changed)
+                    if updated_qty != r_qty:
                         if btn_col1.button("💾 Save", key=f"save_{r_id}"):
                             c.execute(
-                                "UPDATE school_inventory SET book_title = ?, quantity_received = ? WHERE id = ?",
-                                (updated_book, updated_qty, r_id),
+                                "UPDATE school_inventory SET quantity_received = ? WHERE id = ?",
+                                (updated_qty, r_id),
                             )
                             conn.commit()
                             st.success("Updated record!")
                             st.rerun()
 
-                    # 2. Mark as Received Button
+                    # 2. Mark Received Button
                     if r_status == "Pending":
-                        if btn_col2.button("Mark Received", key=f"rec_{r_id}"):
+                        if btn_col2.button("Received", key=f"rec_{r_id}"):
                             c.execute(
                                 "UPDATE school_inventory SET status = 'Received' WHERE id = ?",
                                 (r_id,),
