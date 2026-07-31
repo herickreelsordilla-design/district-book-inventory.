@@ -10,11 +10,13 @@ c.execute(
     """CREATE TABLE IF NOT EXISTS master_inventory 
              (book_title TEXT PRIMARY KEY, central_stock INTEGER)"""
 )
+
+# Ensure ID column exists for easy row-level editing
 c.execute(
     """CREATE TABLE IF NOT EXISTS school_inventory 
-             (school_name TEXT, book_title TEXT, quantity_received INTEGER, status TEXT, 
-              PRIMARY KEY (school_name, book_title))"""
+             (id INTEGER PRIMARY KEY AUTOINCREMENT, school_name TEXT, book_title TEXT, quantity_received INTEGER, status TEXT)"""
 )
+
 c.execute(
     """CREATE TABLE IF NOT EXISTS appointments 
              (id INTEGER PRIMARY KEY AUTOINCREMENT, school_name TEXT, date TEXT, message TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)"""
@@ -57,9 +59,7 @@ if role == "Custodian View":
     password = st.text_input(
         "Enter Custodian Password to Access:", type="password"
     )
-
-    # Change "admin123" to your preferred password
-    CUSTODIAN_PASSWORD = "admin123"
+    CUSTODIAN_PASSWORD = "admin123"  # Change this to your preferred password!
 
     if password == CUSTODIAN_PASSWORD:
         st.success("Access Granted!")
@@ -84,8 +84,9 @@ if role == "Custodian View":
                     )
                     conn.commit()
                     st.success(f"Added {stock} copies of '{title}'!")
+                    st.rerun()
 
-        # 2. Dispatch Books to Schools (Grid View matching picture 2)
+        # 2. Dispatch Books Grid
         with col2:
             st.subheader("Dispatch Books to Schools")
             master_df = pd.read_sql_query(
@@ -99,7 +100,6 @@ if role == "Custodian View":
             else:
                 book_options = master_df["book_title"].tolist()
 
-                # Column Headers
                 h1, h2, h3, h4 = st.columns([2.5, 3, 2, 2])
                 h1.markdown("**School Name**")
                 h2.markdown("**Select Book**")
@@ -107,15 +107,13 @@ if role == "Custodian View":
                 h4.markdown("**Action**")
                 st.divider()
 
-                # Render a row for each school
                 for idx, school in enumerate(SCHOOL_LIST):
                     c1, c2, c3, c4 = st.columns([2.5, 3, 2, 2])
-
                     c1.write(school)
                     selected_book = c2.selectbox(
                         f"Book for {school}",
                         book_options,
-                        key=f"book_{idx}",
+                        key=f"dispatch_book_{idx}",
                         label_visibility="collapsed",
                     )
                     qty = c3.number_input(
@@ -123,16 +121,13 @@ if role == "Custodian View":
                         min_value=1,
                         step=1,
                         value=10,
-                        key=f"qty_{idx}",
+                        key=f"dispatch_qty_{idx}",
                         label_visibility="collapsed",
                     )
 
                     if c4.button(
-                        "Dispatch to Principal",
-                        key=f"btn_{idx}",
-                        type="primary",
+                        "Dispatch", key=f"dispatch_btn_{idx}", type="primary"
                     ):
-                        # Check available stock
                         current_stock = master_df.loc[
                             master_df["book_title"] == selected_book,
                             "central_stock",
@@ -148,9 +143,8 @@ if role == "Custodian View":
                                 (qty, selected_book),
                             )
                             c.execute(
-                                "INSERT INTO school_inventory (school_name, book_title, quantity_received, status) VALUES (?, ?, ?, 'Dispatched') "
-                                "ON CONFLICT(school_name, book_title) DO UPDATE SET quantity_received = quantity_received + ?",
-                                (school, selected_book, qty, qty),
+                                "INSERT INTO school_inventory (school_name, book_title, quantity_received, status) VALUES (?, ?, ?, 'Pending')",
+                                (school, selected_book, qty),
                             )
                             conn.commit()
                             st.success(
@@ -160,11 +154,11 @@ if role == "Custodian View":
 
         st.divider()
 
-        # Display Data Tables
+        # Display Data Tabs
         tab1, tab2, tab3 = st.tabs(
             [
                 "📊 Central Warehouse Stock",
-                "🚚 Dispatched Inventory Log",
+                "🚚 Interactive Dispatched Inventory Log",
                 "📅 Scheduled Appointments / Messages",
             ]
         )
@@ -175,11 +169,97 @@ if role == "Custodian View":
                 use_container_width=True,
             )
 
+        # NEW INTERACTIVE DISPATCHED INVENTORY LOG (Matching Picture 2)
         with tab2:
-            st.dataframe(
-                pd.read_sql_query("SELECT * FROM school_inventory", conn),
-                use_container_width=True,
+            st.subheader("Manage Dispatched Inventory")
+            dispatched_df = pd.read_sql_query(
+                "SELECT * FROM school_inventory", conn
             )
+
+            if dispatched_df.empty:
+                st.info("No dispatched inventory records found.")
+            else:
+                master_df = pd.read_sql_query(
+                    "SELECT * FROM master_inventory", conn
+                )
+                all_books = master_df["book_title"].tolist()
+
+                # Table Header
+                col_sch, col_bk, col_qty, col_st, col_act = st.columns(
+                    [2.5, 3, 1.5, 1.5, 2]
+                )
+                col_sch.markdown("**List of Schools**")
+                col_bk.markdown("**Select Book (option bar)**")
+                col_qty.markdown("**Quantity / Edit**")
+                col_st.markdown("**Status**")
+                col_act.markdown("**Actions**")
+                st.divider()
+
+                for index, row in dispatched_df.iterrows():
+                    r_id = row["id"]
+                    r_school = row["school_name"]
+                    r_book = row["book_title"]
+                    r_qty = row["quantity_received"]
+                    r_status = row["status"]
+
+                    c_sch, c_bk, c_qty, c_st, c_act = st.columns(
+                        [2.5, 3, 1.5, 1.5, 2]
+                    )
+
+                    c_sch.write(r_school)
+
+                    # Option bar to edit book title if mistake was made
+                    book_idx = (
+                        all_books.index(r_book) if r_book in all_books else 0
+                    )
+                    updated_book = c_bk.selectbox(
+                        f"Book {r_id}",
+                        all_books,
+                        index=book_idx,
+                        key=f"edit_bk_{r_id}",
+                        label_visibility="collapsed",
+                    )
+
+                    # Number box to edit quantity directly
+                    updated_qty = c_qty.number_input(
+                        f"Qty {r_id}",
+                        min_value=1,
+                        value=int(r_qty),
+                        key=f"edit_qty_{r_id}",
+                        label_visibility="collapsed",
+                    )
+
+                    # Display status badge
+                    if r_status == "Received":
+                        c_st.markdown("🟢 **Received**")
+                    else:
+                        c_st.markdown("🟡 **Pending**")
+
+                    btn_col1, btn_col2 = c_act.columns(2)
+
+                    # 1. Save Edit Button (if quantity or book title was changed)
+                    if (updated_book != r_book) or (updated_qty != r_qty):
+                        if btn_col1.button("💾 Save", key=f"save_{r_id}"):
+                            c.execute(
+                                "UPDATE school_inventory SET book_title = ?, quantity_received = ? WHERE id = ?",
+                                (updated_book, updated_qty, r_id),
+                            )
+                            conn.commit()
+                            st.success("Updated record!")
+                            st.rerun()
+
+                    # 2. Mark as Received Button
+                    if r_status == "Pending":
+                        if btn_col2.button("Mark Received", key=f"rec_{r_id}"):
+                            c.execute(
+                                "UPDATE school_inventory SET status = 'Received' WHERE id = ?",
+                                (r_id,),
+                            )
+                            conn.commit()
+                            st.success(
+                                f"Marked '{r_book}' for {r_school} as Received!"
+                            )
+                            st.rerun()
 
         with tab3:
             appointments_df = pd.read_sql_query(
@@ -207,7 +287,7 @@ else:
     )
 
     school_df = pd.read_sql_query(
-        "SELECT book_title AS 'Book Title', quantity_received AS 'Quantity Allocated' FROM school_inventory WHERE school_name = ?",
+        "SELECT book_title AS 'Book Title', quantity_received AS 'Quantity Allocated', status AS 'Status' FROM school_inventory WHERE school_name = ?",
         conn,
         params=(selected_school,),
     )
@@ -230,7 +310,7 @@ else:
         appt_date = st.date_input("Preferred Appointment Date")
         message = st.text_area(
             "Message / Notes for Custodian",
-            placeholder="e.g., Requesting to pick up 30 extra Grade 3 Filipino books this Thursday at 10:00 AM.",
+            placeholder="e.g., Requesting to pick up 30 extra Grade 3 Science books this Thursday at 10:00 AM.",
         )
         submit_appt = st.form_submit_button("Send Request to Custodian")
 
