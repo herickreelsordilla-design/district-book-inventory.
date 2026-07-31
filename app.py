@@ -160,22 +160,24 @@ if role == "Custodian View":
 
         st.divider()
 
-        # Display Data Tabs
-        tab1, tab2, tab3 = st.tabs(
+        # Display Data Tabs (Includes New Tab 4 for Individual Book Tracking)
+        tab1, tab2, tab3, tab4 = st.tabs(
             [
                 "📊 Central Warehouse Stock",
                 "🚚 Dispatched Inventory Log",
+                "📖 Track Inventory by Book Title",
                 "📅 Scheduled Appointments / Messages",
             ]
         )
 
+        # TAB 1: Warehouse Stock
         with tab1:
             st.dataframe(
                 pd.read_sql_query("SELECT * FROM master_inventory", conn),
                 use_container_width=True,
             )
 
-        # CLEAN DISPATCHED INVENTORY LOG
+        # TAB 2: Dispatched Log
         with tab2:
             st.subheader("Manage Dispatched Inventory")
             dispatched_df = pd.read_sql_query(
@@ -185,12 +187,6 @@ if role == "Custodian View":
             if dispatched_df.empty:
                 st.info("No dispatched inventory records found.")
             else:
-                master_df = pd.read_sql_query(
-                    "SELECT * FROM master_inventory", conn
-                )
-                all_books = master_df["book_title"].tolist()
-
-                # Table Header
                 col_sch, col_bk, col_qty, col_st, col_act = st.columns(
                     [2.5, 3, 1.5, 1.5, 2]
                 )
@@ -213,11 +209,8 @@ if role == "Custodian View":
                     )
 
                     c_sch.write(f"**{r_school}**")
-
-                    # Display clean text instead of continuous dropdowns
                     c_bk.write(r_book)
 
-                    # Number box to edit quantity directly if needed
                     updated_qty = c_qty.number_input(
                         f"Qty {r_id}",
                         min_value=1,
@@ -226,7 +219,6 @@ if role == "Custodian View":
                         label_visibility="collapsed",
                     )
 
-                    # Display status badge
                     if r_status == "Received":
                         c_st.markdown("🟢 **Received**")
                     else:
@@ -234,7 +226,6 @@ if role == "Custodian View":
 
                     btn_col1, btn_col2 = c_act.columns(2)
 
-                    # 1. Save Edit Button (triggers if quantity changed)
                     if updated_qty != r_qty:
                         if btn_col1.button("💾 Save", key=f"save_{r_id}"):
                             c.execute(
@@ -245,7 +236,6 @@ if role == "Custodian View":
                             st.success("Updated record!")
                             st.rerun()
 
-                    # 2. Mark Received Button
                     if r_status == "Pending":
                         if btn_col2.button("Received", key=f"rec_{r_id}"):
                             c.execute(
@@ -258,7 +248,65 @@ if role == "Custodian View":
                             )
                             st.rerun()
 
+        # TAB 3: NEW INDIVIDUAL BOOK TITLE TRACKER
         with tab3:
+            st.subheader("📖 Book Title Distribution Tracker")
+
+            master_df = pd.read_sql_query(
+                "SELECT * FROM master_inventory", conn
+            )
+
+            if master_df.empty:
+                st.info("No books registered in the master stock yet.")
+            else:
+                all_titles = master_df["book_title"].tolist()
+                selected_title = st.selectbox(
+                    "Select a Book Title to Track:",
+                    all_titles,
+                    key="track_book_select",
+                )
+
+                if selected_title:
+                    # Get warehouse stock
+                    central_stock = master_df.loc[
+                        master_df["book_title"] == selected_title,
+                        "central_stock",
+                    ].values[0]
+
+                    # Get dispatched data for this book
+                    book_dispatches = pd.read_sql_query(
+                        "SELECT school_name AS 'School Name', quantity_received AS 'Quantity', status AS 'Status' FROM school_inventory WHERE book_title = ?",
+                        conn,
+                        params=(selected_title,),
+                    )
+
+                    total_dispatched = (
+                        book_dispatches["Quantity"].sum()
+                        if not book_dispatches.empty
+                        else 0
+                    )
+
+                    # Summary Metrics Display
+                    m1, m2, m3 = st.columns(3)
+                    m1.metric("Central Warehouse Stock", central_stock)
+                    m2.metric("Total Dispatched to Schools", total_dispatched)
+                    m3.metric(
+                        "Total District Inventory",
+                        central_stock + total_dispatched,
+                    )
+
+                    st.divider()
+                    st.write(
+                        f"### School Breakdown for: **{selected_title}**"
+                    )
+
+                    if book_dispatches.empty:
+                        st.info("This book has not been dispatched to any schools yet.")
+                    else:
+                        st.dataframe(book_dispatches, use_container_width=True)
+
+        # TAB 4: Appointments / Messages
+        with tab4:
             appointments_df = pd.read_sql_query(
                 "SELECT school_name AS 'School', date AS 'Requested Date', message AS 'Message / Reason', timestamp AS 'Sent At' FROM appointments ORDER BY id DESC",
                 conn,
