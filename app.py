@@ -3,26 +3,37 @@ import pandas as pd
 import streamlit as st
 
 # --- DATABASE SETUP ---
+# --- DATABASE SETUP (SAFE SETUP) ---
 conn = sqlite3.connect("inventory.db", check_same_thread=False)
 c = conn.cursor()
 
+# 1. Master stock table
 c.execute(
     """CREATE TABLE IF NOT EXISTS master_inventory 
-             (book_title TEXT PRIMARY KEY, central_stock INTEGER)"""
+       (book_title TEXT PRIMARY KEY, central_stock INTEGER)"""
 )
 
-# Auto-upgrade database structure if missing ID column
-c.execute("PRAGMA table_info(school_inventory)")
-columns = [column[1] for column in c.fetchall()]
-
-if "id" not in columns and len(columns) > 0:
-    c.execute("DROP TABLE school_inventory")
-
+# 2. School inventory table
 c.execute(
     """CREATE TABLE IF NOT EXISTS school_inventory 
-             (id INTEGER PRIMARY KEY AUTOINCREMENT, school_name TEXT, book_title TEXT, quantity_received INTEGER, status TEXT)"""
+       (id INTEGER PRIMARY KEY AUTOINCREMENT, 
+        school_name TEXT, 
+        book_title TEXT, 
+        quantity_received INTEGER, 
+        status TEXT)"""
 )
 
+# 3. Appointments table
+c.execute(
+    """CREATE TABLE IF NOT EXISTS appointments 
+       (id INTEGER PRIMARY KEY AUTOINCREMENT, 
+        school_name TEXT, 
+        date TEXT, 
+        message TEXT, 
+        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)"""
+)
+
+conn.commit()
 c.execute(
     """CREATE TABLE IF NOT EXISTS appointments 
              (id INTEGER PRIMARY KEY AUTOINCREMENT, school_name TEXT, date TEXT, message TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)"""
