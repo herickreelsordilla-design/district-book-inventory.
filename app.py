@@ -92,7 +92,7 @@ if role == "Custodian View":
                     st.success(f"Added {stock} copies of '{title}'!")
                     st.rerun()
 
-        # 2. Dispatch Books Grid (SINGLE DROPDOWN UPDATE)
+        # 2. DISPATCH BOOKS GRID WITH "SELECT BOOK" DROP BAR PER ROW
         with col2:
             st.subheader("Dispatch Books to Schools")
             master_df = pd.read_sql_query(
@@ -106,36 +106,27 @@ if role == "Custodian View":
             else:
                 book_options = master_df["book_title"].tolist()
 
-                # SINGLE DROPDOWN AT THE TOP
-                selected_book = st.selectbox(
-                    "📌 Select Book Title to Dispatch:",
-                    book_options,
-                    key="global_dispatch_book",
-                )
-
-                # Get available stock for selected book
-                current_stock = master_df.loc[
-                    master_df["book_title"] == selected_book, "central_stock"
-                ].values[0]
-
-                st.caption(
-                    f"**Available Warehouse Stock:** `{current_stock}` copies"
-                )
-
-                st.divider()
-
-                # Grid Header
-                h1, h2, h3 = st.columns([3, 2, 2])
+                # Table Header
+                h1, h2, h3, h4 = st.columns([2.5, 3, 2, 2])
                 h1.markdown("**School Name**")
-                h2.markdown("**Quantity**")
-                h3.markdown("**Action**")
+                h2.markdown("**Select Book**")
+                h3.markdown("**Quantity**")
+                h4.markdown("**Action**")
                 st.divider()
 
                 for idx, school in enumerate(SCHOOL_LIST):
-                    c1, c2, c3 = st.columns([3, 2, 2])
+                    c1, c2, c3, c4 = st.columns([2.5, 3, 2, 2])
                     c1.write(f"**{school}**")
 
-                    qty = c2.number_input(
+                    # Dropdown ("drop bar") for selecting book title for each row
+                    selected_book = c2.selectbox(
+                        f"Book for {school}",
+                        book_options,
+                        key=f"dispatch_book_{idx}",
+                        label_visibility="collapsed",
+                    )
+
+                    qty = c3.number_input(
                         f"Qty for {school}",
                         min_value=1,
                         step=1,
@@ -144,9 +135,14 @@ if role == "Custodian View":
                         label_visibility="collapsed",
                     )
 
-                    if c3.button(
+                    if c4.button(
                         "Dispatch", key=f"dispatch_btn_{idx}", type="primary"
                     ):
+                        current_stock = master_df.loc[
+                            master_df["book_title"] == selected_book,
+                            "central_stock",
+                        ].values[0]
+
                         if qty > current_stock:
                             st.error(
                                 f"Not enough stock! Only {current_stock} available."
@@ -256,7 +252,7 @@ if role == "Custodian View":
                             )
                             st.rerun()
 
-        # TAB 3: INDIVIDUAL BOOK TITLE TRACKER
+        # TAB 3: BOOK TITLE DISTRIBUTION TRACKER
         with tab3:
             st.subheader("📖 Book Title Distribution Tracker")
 
