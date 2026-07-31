@@ -2,7 +2,6 @@ import sqlite3
 import pandas as pd
 import streamlit as st
 
-# --- DATABASE SETUP ---
 # --- DATABASE SETUP (SAFE SETUP) ---
 conn = sqlite3.connect("inventory.db", check_same_thread=False)
 c = conn.cursor()
@@ -33,11 +32,6 @@ c.execute(
         timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)"""
 )
 
-conn.commit()
-c.execute(
-    """CREATE TABLE IF NOT EXISTS appointments 
-             (id INTEGER PRIMARY KEY AUTOINCREMENT, school_name TEXT, date TEXT, message TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)"""
-)
 conn.commit()
 
 # --- PRESET SCHOOL LIST ---
@@ -235,82 +229,31 @@ if role == "Custodian View":
         # TAB 2: Dispatched Log
         with tab2:
             st.subheader("Manage Dispatched Inventory")
+            
+            # Query rowid explicitly as 'id' so older schema variations won't throw KeyError
             dispatched_df = pd.read_sql_query(
-                "SELECT * FROM school_inventory", conn
+                "SELECT rowid AS id, school_name, book_title, quantity_received, status FROM school_inventory", conn
             )
 
-# TAB 2: Dispatched Log
-with tab2:
-    st.subheader("Manage Dispatched Inventory")
-    
-    # Query rowid explicitly as 'id' so older database schemas won't throw KeyError
-    dispatched_df = pd.read_sql_query(
-        "SELECT rowid AS id, school_name, book_title, quantity_received, status FROM school_inventory", conn
-    )
-
-    if dispatched_df.empty:
-        st.info("No dispatched inventory records found.")
-    else:
-        col_sch, col_bk, col_qty, col_st, col_act = st.columns(
-            [2.5, 3, 1.5, 1.5, 2]
-        )
-        col_sch.markdown("**School Name**")
-        col_bk.markdown("**Book Allocated**")
-        col_qty.markdown("**Quantity / Edit**")
-        col_st.markdown("**Status**")
-        col_act.markdown("**Actions**")
-        st.divider()
-
-        for index, row in dispatched_df.iterrows():
-            r_id = row["id"]
-            r_school = row["school_name"]
-            r_book = row["book_title"]
-            r_qty = row["quantity_received"]
-            r_status = row["status"]
-
-            c_sch, c_bk, c_qty, c_st, c_act = st.columns(
-                [2.5, 3, 1.5, 1.5, 2]
-            )
-
-            c_sch.write(f"**{r_school}**")
-            c_bk.write(r_book)
-
-            updated_qty = c_qty.number_input(
-                f"Qty {r_id}",
-                min_value=1,
-                value=int(r_qty),
-                key=f"edit_qty_{r_id}",
-                label_visibility="collapsed",
-            )
-
-            if r_status == "Received":
-                c_st.markdown("🟢 **Received**")
+            if dispatched_df.empty:
+                st.info("No dispatched inventory records found.")
             else:
-                c_st.markdown("🟡 **Pending**")
+                col_sch, col_bk, col_qty, col_st, col_act = st.columns(
+                    [2.5, 3, 1.5, 1.5, 2]
+                )
+                col_sch.markdown("**School Name**")
+                col_bk.markdown("**Book Allocated**")
+                col_qty.markdown("**Quantity / Edit**")
+                col_st.markdown("**Status**")
+                col_act.markdown("**Actions**")
+                st.divider()
 
-            btn_col1, btn_col2 = c_act.columns(2)
-
-            if updated_qty != r_qty:
-                if btn_col1.button("💾 Save", key=f"save_{r_id}"):
-                    c.execute(
-                        "UPDATE school_inventory SET quantity_received = ? WHERE rowid = ?",
-                        (updated_qty, r_id),
-                    )
-                    conn.commit()
-                    st.success("Updated record!")
-                    st.rerun()
-
-            if r_status == "Pending":
-                if btn_col2.button("Received", key=f"rec_{r_id}"):
-                    c.execute(
-                        "UPDATE school_inventory SET status = 'Received' WHERE rowid = ?",
-                        (r_id,),
-                    )
-                    conn.commit()
-                    st.success(
-                        f"Marked '{r_book}' for {r_school} as Received!"
-                    )
-                    st.rerun()
+                for index, row in dispatched_df.iterrows():
+                    r_id = row["id"]
+                    r_school = row["school_name"]
+                    r_book = row["book_title"]
+                    r_qty = row["quantity_received"]
+                    r_status = row["status"]
 
                     c_sch, c_bk, c_qty, c_st, c_act = st.columns(
                         [2.5, 3, 1.5, 1.5, 2]
@@ -337,7 +280,7 @@ with tab2:
                     if updated_qty != r_qty:
                         if btn_col1.button("💾 Save", key=f"save_{r_id}"):
                             c.execute(
-                                "UPDATE school_inventory SET quantity_received = ? WHERE id = ?",
+                                "UPDATE school_inventory SET quantity_received = ? WHERE rowid = ?",
                                 (updated_qty, r_id),
                             )
                             conn.commit()
@@ -347,7 +290,7 @@ with tab2:
                     if r_status == "Pending":
                         if btn_col2.button("Received", key=f"rec_{r_id}"):
                             c.execute(
-                                "UPDATE school_inventory SET status = 'Received' WHERE id = ?",
+                                "UPDATE school_inventory SET status = 'Received' WHERE rowid = ?",
                                 (r_id,),
                             )
                             conn.commit()
