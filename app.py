@@ -377,6 +377,58 @@ else:
 
     selected_school = st.selectbox("Select Your School:", SCHOOL_LIST)
 
+    # Cleaned query using TRIM and GROUP BY so all dispatched books show up accurately
+    school_df = pd.read_sql_query(
+        """SELECT 
+            book_title AS 'Book Title', 
+            SUM(quantity_received) AS 'Total Quantity Allocated', 
+            status AS 'Status' 
+           FROM school_inventory 
+           WHERE TRIM(school_name) = TRIM(?)
+           GROUP BY book_title, status""",
+        conn,
+        params=(selected_school,),
+    )
+
+    st.subheader(f"📦 Incoming / Assigned Books for {selected_school}")
+    
+    if school_df.empty:
+        st.info(
+            "ℹ️ No dispatches logged for this school yet.\n\n"
+            "**Note for Custodians:** Books added to Central Storage only appear here AFTER clicking **'Dispatch'** or **'Batch Dispatch All'**."
+        )
+    else:
+        st.dataframe(school_df, use_container_width=True)
+
+    st.divider()
+
+    # SCHEDULE AN APPOINTMENT / MESSAGE SECTION
+    st.subheader("📅 Schedule an Appointment / Message Custodian")
+    st.write(
+        "Need to pick up books, make a request, or schedule a meeting? Send a message below."
+    )
+
+    with st.form("appointment_form"):
+        appt_date = st.date_input("Preferred Appointment Date")
+        message = st.text_area(
+            "Message / Notes for Custodian",
+            placeholder="e.g., Requesting to pick up 30 extra Grade 3 Science books this Thursday at 10:00 AM.",
+        )
+        submit_appt = st.form_submit_button("Send Request to Custodian")
+
+        if submit_appt:
+            if message.strip() == "":
+                st.warning("Please enter a message before sending.")
+            else:
+                c.execute(
+                    "INSERT INTO appointments (school_name, date, message) VALUES (?, ?, ?)",
+                    (selected_school, str(appt_date), message.strip()),
+                )
+                conn.commit()
+                st.success(
+                    "Your appointment request/message has been sent to the Custodian!"
+                )
+
     school_df = pd.read_sql_query(
         "SELECT book_title AS 'Book Title', quantity_received AS 'Quantity Allocated', status AS 'Status' FROM school_inventory WHERE school_name = ?",
         conn,
