@@ -6,7 +6,6 @@ import streamlit as st
 conn = sqlite3.connect("inventory.db", check_same_thread=False)
 c = conn.cursor()
 
-# Create tables for Master Inventory, School Allocations, and Messages/Appointments
 c.execute(
     """CREATE TABLE IF NOT EXISTS master_inventory 
              (book_title TEXT PRIMARY KEY, central_stock INTEGER)"""
@@ -22,6 +21,26 @@ c.execute(
 )
 conn.commit()
 
+# --- PRESET SCHOOL LIST ---
+SCHOOL_LIST = [
+    "Arcaflor Maniapao ES",
+    "Balabag ES",
+    "Casildo B. Nonol Sr. ES",
+    "Colorado ES",
+    "Damñas ES",
+    "Digos City Central ES",
+    "Domingo Abawag ES",
+    "Dulangan ES",
+    "Federico Alferez ES",
+    "Jolencio R. Alberca ES",
+    "Lungag ES",
+    "Mahayahay ES",
+    "Pedro Basalan ES",
+    "Ranao ES",
+    "Remedios N. Saplala ES",
+    "Ruparan ES",
+]
+
 # --- APP LAYOUT ---
 st.set_page_config(page_title="District Book Inventory", layout="wide")
 st.title("📚 District Book Inventory Tracker")
@@ -35,7 +54,6 @@ role = st.sidebar.radio("Select View:", ["Principal View", "Custodian View"])
 if role == "Custodian View":
     st.header("🔒 Custodian Control Panel")
 
-    # Simple Password Lock
     password = st.text_input(
         "Enter Custodian Password to Access:", type="password"
     )
@@ -46,9 +64,9 @@ if role == "Custodian View":
     if password == CUSTODIAN_PASSWORD:
         st.success("Access Granted!")
 
-        col1, col2 = st.columns(2)
+        col1, col2 = st.columns([1, 2])
 
-        # 1. Add new books
+        # 1. Add new books to central storage
         with col1:
             st.subheader("Add / Update Central Stock")
             with st.form("add_book_form"):
@@ -67,55 +85,76 @@ if role == "Custodian View":
                     conn.commit()
                     st.success(f"Added {stock} copies of '{title}'!")
 
-        # 2. Dispatch books
+        # 2. Dispatch Books to Schools (Grid View matching picture 2)
         with col2:
-            st.subheader("Dispatch Books to a School")
+            st.subheader("Dispatch Books to Schools")
             master_df = pd.read_sql_query(
                 "SELECT * FROM master_inventory", conn
             )
 
-            if not master_df.empty:
-                with st.form("dispatch_form"):
-                    selected_book = st.selectbox(
-                        "Select Book", master_df["book_title"].tolist()
+            if master_df.empty:
+                st.info(
+                    "Please add books to the Central Stock first before dispatching."
+                )
+            else:
+                book_options = master_df["book_title"].tolist()
+
+                # Column Headers
+                h1, h2, h3, h4 = st.columns([2.5, 3, 2, 2])
+                h1.markdown("**School Name**")
+                h2.markdown("**Select Book**")
+                h3.markdown("**Quantity**")
+                h4.markdown("**Action**")
+                st.divider()
+
+                # Render a row for each school
+                for idx, school in enumerate(SCHOOL_LIST):
+                    c1, c2, c3, c4 = st.columns([2.5, 3, 2, 2])
+
+                    c1.write(school)
+                    selected_book = c2.selectbox(
+                        f"Book for {school}",
+                        book_options,
+                        key=f"book_{idx}",
+                        label_visibility="collapsed",
                     )
-                    school_name = st.text_input(
-                        "School / Principal Name",
-                        placeholder="e.g. Lincoln High",
-                    )
-                    dispatch_qty = st.number_input(
-                        "Quantity to Send", min_value=1, step=1, value=10
-                    )
-                    dispatch_submit = st.form_submit_button(
-                        "Dispatch to Principal"
+                    qty = c3.number_input(
+                        f"Qty for {school}",
+                        min_value=1,
+                        step=1,
+                        value=10,
+                        key=f"qty_{idx}",
+                        label_visibility="collapsed",
                     )
 
-                    if dispatch_submit and school_name:
+                    if c4.button(
+                        "Dispatch to Principal",
+                        key=f"btn_{idx}",
+                        type="primary",
+                    ):
+                        # Check available stock
                         current_stock = master_df.loc[
                             master_df["book_title"] == selected_book,
                             "central_stock",
                         ].values[0]
 
-                        if dispatch_qty > current_stock:
-                            st.error("Not enough central stock available!")
+                        if qty > current_stock:
+                            st.error(
+                                f"Not enough stock! Only {current_stock} available."
+                            )
                         else:
                             c.execute(
                                 "UPDATE master_inventory SET central_stock = central_stock - ? WHERE book_title = ?",
-                                (dispatch_qty, selected_book),
+                                (qty, selected_book),
                             )
                             c.execute(
                                 "INSERT INTO school_inventory (school_name, book_title, quantity_received, status) VALUES (?, ?, ?, 'Dispatched') "
                                 "ON CONFLICT(school_name, book_title) DO UPDATE SET quantity_received = quantity_received + ?",
-                                (
-                                    school_name.strip(),
-                                    selected_book,
-                                    dispatch_qty,
-                                    dispatch_qty,
-                                ),
+                                (school, selected_book, qty, qty),
                             )
                             conn.commit()
                             st.success(
-                                f"Dispatched {dispatch_qty} of '{selected_book}' to {school_name}!"
+                                f"Dispatched {qty} of '{selected_book}' to {school}!"
                             )
                             st.rerun()
 
@@ -163,49 +202,47 @@ if role == "Custodian View":
 else:
     st.header("Principal Portal")
 
-    all_schools = pd.read_sql_query(
-        "SELECT DISTINCT school_name FROM school_inventory", conn
-    )["school_name"].tolist()
+    selected_school = st.selectbox(
+        "Select Your School:", SCHOOL_LIST
+    )
 
-    if not all_schools:
-        st.info("No dispatches logged yet.")
+    school_df = pd.read_sql_query(
+        "SELECT book_title AS 'Book Title', quantity_received AS 'Quantity Allocated' FROM school_inventory WHERE school_name = ?",
+        conn,
+        params=(selected_school,),
+    )
+
+    st.subheader(f"Incoming / Assigned Books for {selected_school}")
+    if school_df.empty:
+        st.info("No dispatches logged for this school yet.")
     else:
-        selected_school = st.selectbox("Select Your School:", all_schools)
-
-        school_df = pd.read_sql_query(
-            "SELECT book_title AS 'Book Title', quantity_received AS 'Quantity Allocated' FROM school_inventory WHERE school_name = ?",
-            conn,
-            params=(selected_school,),
-        )
-
-        st.subheader(f"Incoming / Assigned Books for {selected_school}")
         st.dataframe(school_df, use_container_width=True)
 
-        st.divider()
+    st.divider()
 
-        # NEW: SCHEDULE AN APPOINTMENT / MESSAGE SECTION
-        st.subheader("📅 Schedule an Appointment / Message Custodian")
-        st.write(
-            "Need to pick up books, make a request, or schedule a meeting? Send a message below."
+    # SCHEDULE AN APPOINTMENT / MESSAGE SECTION
+    st.subheader("📅 Schedule an Appointment / Message Custodian")
+    st.write(
+        "Need to pick up books, make a request, or schedule a meeting? Send a message below."
+    )
+
+    with st.form("appointment_form"):
+        appt_date = st.date_input("Preferred Appointment Date")
+        message = st.text_area(
+            "Message / Notes for Custodian",
+            placeholder="e.g., Requesting to pick up 30 extra Grade 3 Filipino books this Thursday at 10:00 AM.",
         )
+        submit_appt = st.form_submit_button("Send Request to Custodian")
 
-        with st.form("appointment_form"):
-            appt_date = st.date_input("Preferred Appointment Date")
-            message = st.text_area(
-                "Message / Notes for Custodian",
-                placeholder="e.g., Requesting to pick up 30 extra Grade 2 Math books this Thursday at 10:00 AM.",
-            )
-            submit_appt = st.form_submit_button("Send Request to Custodian")
-
-            if submit_appt:
-                if message.strip() == "":
-                    st.warning("Please enter a message before sending.")
-                else:
-                    c.execute(
-                        "INSERT INTO appointments (school_name, date, message) VALUES (?, ?, ?)",
-                        (selected_school, str(appt_date), message.strip()),
-                    )
-                    conn.commit()
-                    st.success(
-                        "Your appointment request/message has been sent to the Custodian!"
-                    )
+        if submit_appt:
+            if message.strip() == "":
+                st.warning("Please enter a message before sending.")
+            else:
+                c.execute(
+                    "INSERT INTO appointments (school_name, date, message) VALUES (?, ?, ?)",
+                    (selected_school, str(appt_date), message.strip()),
+                )
+                conn.commit()
+                st.success(
+                    "Your appointment request/message has been sent to the Custodian!"
+                )
