@@ -92,7 +92,7 @@ if role == "Custodian View":
                     st.success(f"Added {stock} copies of '{title}'!")
                     st.rerun()
 
-        # 2. DISPATCH BOOKS GRID WITH "DISPATCH ALL" BATCH BUTTON
+        # 2. DISPATCH BOOKS GRID WITH MASTER DROP BAR + ROW DROPDOWNS
         with col2:
             st.subheader("Dispatch Books to Schools")
             master_df = pd.read_sql_query(
@@ -106,12 +106,14 @@ if role == "Custodian View":
             else:
                 book_options = master_df["book_title"].tolist()
 
-                # BATCH DISPATCH ALL BUTTON AT THE TOP
-                batch_col1, batch_col2 = st.columns([3, 1])
-                batch_col1.caption(
-                    "Set the books and quantities below, then click **Batch Dispatch All** to send all at once."
+                # MASTER DROP BAR TO PRE-FILL ALL ROWS
+                m_col1, m_col2 = st.columns([3, 1])
+                default_book = m_col1.selectbox(
+                    "📖 Select Default Book Title (Applies to all drop bars below):",
+                    book_options,
+                    key="master_book_dropbar",
                 )
-                dispatch_all_btn = batch_col2.button(
+                dispatch_all_btn = m_col2.button(
                     "⚡ Batch Dispatch All", type="primary", use_container_width=True
                 )
 
@@ -125,16 +127,24 @@ if role == "Custodian View":
                 h4.markdown("**Action**")
                 st.divider()
 
-                # Temporary list to store form selections for batch dispatching
+                # Find default index for dropbar options
+                default_idx = (
+                    book_options.index(default_book)
+                    if default_book in book_options
+                    else 0
+                )
+
                 dispatch_selections = []
 
                 for idx, school in enumerate(SCHOOL_LIST):
                     c1, c2, c3, c4 = st.columns([2.5, 3, 2, 2])
                     c1.write(f"**{school}**")
 
+                    # Dropdown bar per row, defaults to master dropbar selection
                     selected_book = c2.selectbox(
                         f"Book for {school}",
                         book_options,
+                        index=default_idx,
                         key=f"dispatch_book_{idx}",
                         label_visibility="collapsed",
                     )
@@ -184,9 +194,8 @@ if role == "Custodian View":
                             )
                             st.rerun()
 
-                # BATCH DISPATCH LOGIC WHEN "DISPATCH ALL" IS CLICKED
+                # BATCH DISPATCH LOGIC
                 if dispatch_all_btn:
-                    # Validate stock requirements per book title
                     req_by_book = {}
                     for item in dispatch_selections:
                         b = item["book"]
@@ -205,7 +214,6 @@ if role == "Custodian View":
                             has_stock_error = True
 
                     if not has_stock_error:
-                        # Process all dispatches
                         for item in dispatch_selections:
                             c.execute(
                                 "UPDATE master_inventory SET central_stock = central_stock - ? WHERE book_title = ?",
