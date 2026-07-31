@@ -100,13 +100,17 @@ if role == "Custodian View":
                     st.success(f"Added {stock} copies of '{title}'!")
                     st.rerun()
 
-# --- B. DISPATCH BOOKS GRID (WITH INSTANT LIVE MONITORING) ---
+        # --- B. DISPATCH BOOKS GRID (WITH INSTANT LIVE MONITORING & UNIQUE KEYS) ---
         with col2:
             st.subheader("Dispatch Books to Schools")
-            master_df = pd.read_sql_query("SELECT * FROM master_inventory", conn)
+            master_df = pd.read_sql_query(
+                "SELECT * FROM master_inventory", conn
+            )
 
             if master_df.empty:
-                st.info("Please add books to Central Stock first before dispatching.")
+                st.info(
+                    "Please add books to Central Stock first before dispatching."
+                )
             else:
                 book_options = master_df["book_title"].tolist()
 
@@ -118,12 +122,16 @@ if role == "Custodian View":
                     key="dispatch_book_select",
                 )
                 dispatch_all_btn = m_col2.button(
-                    "⚡ Batch Dispatch All", type="primary", use_container_width=True
+                    "⚡ Batch Dispatch All",
+                    type="primary",
+                    use_container_width=True,
+                    key="batch_dispatch_btn",
                 )
 
                 # Fetch current warehouse stock
                 current_stock = master_df.loc[
-                    master_df["book_title"] == selected_book, "central_stock"
+                    master_df["book_title"] == selected_book,
+                    "central_stock",
                 ].values[0]
 
                 st.divider()
@@ -142,10 +150,9 @@ if role == "Custodian View":
                     c1, c2, c3 = st.columns([4, 2, 2])
                     c1.write(f"**{school}**")
 
-                    # Key for dynamic state tracking
                     input_key = f"dispatch_qty_{selected_book}_{idx}"
 
-                    # Initialize default value in session state if not set
+                    # Initialize default session state value if not yet present
                     if input_key not in st.session_state:
                         st.session_state[input_key] = 10
 
@@ -157,119 +164,8 @@ if role == "Custodian View":
                         label_visibility="collapsed",
                     )
 
-                    # Accurately sum values currently stored in state
-                    live_total_requested += st.session_state[input_key]
-
-                    dispatch_selections.append({"school": school, "qty": qty})
-
-                    # Individual Dispatch Button
-                    if c3.button("Dispatch", key=f"dispatch_btn_{idx}"):
-                        if qty > current_stock:
-                            st.error(f"Not enough stock! Only {current_stock} available.")
-                        else:
-                            c.execute(
-                                "UPDATE master_inventory SET central_stock = central_stock - ? WHERE book_title = ?",
-                                (qty, selected_book),
-                            )
-                            c.execute(
-                                "INSERT INTO school_inventory (school_name, book_title, quantity_received, status) VALUES (?, ?, ?, 'Pending')",
-                                (school, selected_book, qty),
-                            )
-                            conn.commit()
-                            st.success(f"Dispatched {qty} copies of '{selected_book}' to {school}!")
-                            st.rerun()
-
-                # LIVE MONITORING METRICS BANNER
-                st.divider()
-                m1, m2, m3 = st.columns(3)
-                m1.metric("📦 Warehouse Stock Available", current_stock)
-                m2.metric("📋 Total Input (All Schools)", live_total_requested)
-
-                remaining_after_batch = current_stock - live_total_requested
-                if remaining_after_batch >= 0:
-                    m3.metric("🟢 Remaining Stock After Batch", remaining_after_batch)
-                else:
-                    m3.metric("🔴 Stock Deficit", remaining_after_batch, delta_color="inverse")
-                    st.error(
-                        f"⚠️ Warning: Total requested quantity ({live_total_requested}) exceeds available warehouse stock ({current_stock}) by {abs(remaining_after_batch)} books!"
-                    )
-
-                # BATCH DISPATCH ALL LOGIC
-                if dispatch_all_btn:
-                    if live_total_requested > current_stock:
-                        st.error(
-                            f"Cannot batch dispatch! Required `{live_total_requested}` copies of **{selected_book}**, but only `{current_stock}` available in central stock."
-                        )
-                    else:
-                        for item in dispatch_selections:
-                            c.execute(
-                                "UPDATE master_inventory SET central_stock = central_stock - ? WHERE book_title = ?",
-                                (item["qty"], selected_book),
-                            )
-                            c.execute(
-                                "INSERT INTO school_inventory (school_name, book_title, quantity_received, status) VALUES (?, ?, ?, 'Pending')",
-                                (item["school"], selected_book, item["qty"]),
-                            )
-                        conn.commit()
-                        st.success(
-                            f"Successfully batch dispatched **{selected_book}** ({live_total_requested} total copies) to all {len(SCHOOL_LIST)} schools!"
-                        )
-                        st.rerun()
-            master_df = pd.read_sql_query(
-                "SELECT * FROM master_inventory", conn
-            )
-
-            if master_df.empty:
-                st.info(
-                    "Please add books to the Central Stock first before dispatching."
-                )
-            else:
-                book_options = master_df["book_title"].tolist()
-
-                # MAIN DROP BAR TO SELECT BOOK TITLE
-                m_col1, m_col2 = st.columns([3, 1])
-                selected_book = m_col1.selectbox(
-                    "📖 Select Book Title to Dispatch:",
-                    book_options,
-                    key="dispatch_book_select",
-                )
-                dispatch_all_btn = m_col2.button(
-                    "⚡ Batch Dispatch All", type="primary", use_container_width=True
-                )
-
-                # Fetch current warehouse stock
-                current_stock = master_df.loc[
-                    master_df["book_title"] == selected_book,
-                    "central_stock",
-                ].values[0]
-
-                live_total_requested = 0
-                dispatch_selections = []
-
-                st.divider()
-
-                # Table Header
-                h1, h2, h3 = st.columns([4, 2, 2])
-                h1.markdown("**School Name**")
-                h2.markdown("**Quantity**")
-                h3.markdown("**Action**")
-                st.divider()
-
-                for idx, school in enumerate(SCHOOL_LIST):
-                    c1, c2, c3 = st.columns([4, 2, 2])
-                    c1.write(f"**{school}**")
-
-                    qty = c2.number_input(
-                        f"Qty for {school}",
-                        min_value=1,
-                        step=1,
-                        value=10,
-                        key=f"dispatch_qty_{selected_book}_{idx}",
-                        label_visibility="collapsed",
-                    )
-
                     # Dynamic Monitoring Accumulator
-                    live_total_requested += qty
+                    live_total_requested += st.session_state[input_key]
 
                     dispatch_selections.append(
                         {
@@ -278,8 +174,8 @@ if role == "Custodian View":
                         }
                     )
 
-                    # Individual Dispatch Button
-                    if c3.button("Dispatch", key=f"dispatch_btn_{idx}"):
+                    # Individual Dispatch Button with Unique Key
+                    if c3.button("Dispatch", key=f"dispatch_btn_{selected_book}_{idx}"):
                         if qty > current_stock:
                             st.error(
                                 f"Not enough stock! Only {current_stock} available."
@@ -302,16 +198,16 @@ if role == "Custodian View":
                 # LIVE MONITORING METRICS BANNER
                 st.divider()
                 m1, m2, m3 = st.columns(3)
-                m1.metric("📦 Warehouse Available Stock", current_stock)
-                m2.metric("📋 Live Input Total (All Schools)", live_total_requested)
+                m1.metric("📦 Warehouse Stock Available", current_stock)
+                m2.metric("📋 Total Input (All Schools)", live_total_requested)
 
                 remaining_after_batch = current_stock - live_total_requested
                 if remaining_after_batch >= 0:
-                    m3.metric("🟢 Stock Remaining After Batch", remaining_after_batch)
+                    m3.metric("🟢 Remaining Stock After Batch", remaining_after_batch)
                 else:
                     m3.metric("🔴 Stock Deficit", remaining_after_batch, delta_color="inverse")
                     st.error(
-                        f"⚠️ Warning: Total input quantity ({live_total_requested}) exceeds available stock ({current_stock}) by {abs(remaining_after_batch)} books!"
+                        f"⚠️ Warning: Total requested quantity ({live_total_requested}) exceeds available warehouse stock ({current_stock}) by {abs(remaining_after_batch)} books!"
                     )
 
                 # BATCH DISPATCH ALL LOGIC
@@ -365,7 +261,7 @@ if role == "Custodian View":
                         central_df["book_title"].tolist(),
                         key="del_master_select",
                     )
-                    if st.button("Delete Master Book Title", type="primary"):
+                    if st.button("Delete Master Book Title", type="primary", key="btn_del_master_title"):
                         c.execute(
                             "DELETE FROM master_inventory WHERE book_title = ?",
                             (del_book_title,),
@@ -590,7 +486,7 @@ else:
 
     selected_school = st.selectbox("Select Your School:", SCHOOL_LIST)
 
-    # Grouped query with TRIM to prevent missing books due to spaces
+    # Grouped query with TRIM to prevent missing books due to whitespace discrepancies
     school_df = pd.read_sql_query(
         """SELECT 
             book_title AS 'Book Title', 
