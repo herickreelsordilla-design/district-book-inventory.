@@ -11,7 +11,14 @@ c.execute(
              (book_title TEXT PRIMARY KEY, central_stock INTEGER)"""
 )
 
-# Ensure ID column exists for easy row-level editing
+# Check if old table exists without 'id' column and upgrade it safely
+c.execute("PRAGMA table_info(school_inventory)")
+columns = [column[1] for column in c.fetchall()]
+
+if "id" not in columns and len(columns) > 0:
+    # Drop old table format so it can be recreated with ID
+    c.execute("DROP TABLE school_inventory")
+
 c.execute(
     """CREATE TABLE IF NOT EXISTS school_inventory 
              (id INTEGER PRIMARY KEY AUTOINCREMENT, school_name TEXT, book_title TEXT, quantity_received INTEGER, status TEXT)"""
@@ -169,7 +176,7 @@ if role == "Custodian View":
                 use_container_width=True,
             )
 
-        # NEW INTERACTIVE DISPATCHED INVENTORY LOG (Matching Picture 2)
+        # INTERACTIVE DISPATCHED INVENTORY LOG
         with tab2:
             st.subheader("Manage Dispatched Inventory")
             dispatched_df = pd.read_sql_query(
@@ -237,7 +244,7 @@ if role == "Custodian View":
 
                     btn_col1, btn_col2 = c_act.columns(2)
 
-                    # 1. Save Edit Button (if quantity or book title was changed)
+                    # 1. Save Edit Button
                     if (updated_book != r_book) or (updated_qty != r_qty):
                         if btn_col1.button("💾 Save", key=f"save_{r_id}"):
                             c.execute(
@@ -282,9 +289,7 @@ if role == "Custodian View":
 else:
     st.header("Principal Portal")
 
-    selected_school = st.selectbox(
-        "Select Your School:", SCHOOL_LIST
-    )
+    selected_school = st.selectbox("Select Your School:", SCHOOL_LIST)
 
     school_df = pd.read_sql_query(
         "SELECT book_title AS 'Book Title', quantity_received AS 'Quantity Allocated', status AS 'Status' FROM school_inventory WHERE school_name = ?",
