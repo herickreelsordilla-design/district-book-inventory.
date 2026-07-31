@@ -97,7 +97,7 @@ if role == "Custodian View":
                     st.success(f"Added {stock} copies of '{title}'!")
                     st.rerun()
 
-        # 2. DISPATCH BOOKS GRID (NO ROW DROPDOWNS)
+        # 2. DISPATCH BOOKS GRID
         with col2:
             st.subheader("Dispatch Books to Schools")
             master_df = pd.read_sql_query(
@@ -210,27 +210,43 @@ if role == "Custodian View":
         st.divider()
 
         # Display Data Tabs
-        tab1, tab2, tab3, tab4 = st.tabs(
+        tab1, tab2, tab3, tab4, tab5 = st.tabs(
             [
                 "📊 Central Warehouse Stock",
                 "🚚 Dispatched Inventory Log",
-                "📖 Track Inventory by Book Title",
+                "🗑️ Delete Inventory",
+                "📖 Track Inventory by Title",
                 "📅 Scheduled Appointments / Messages",
             ]
         )
 
         # TAB 1: Warehouse Stock
         with tab1:
-            st.dataframe(
-                pd.read_sql_query("SELECT * FROM master_inventory", conn),
-                use_container_width=True,
-            )
+            st.subheader("📊 Central Warehouse Stock")
+            central_df = pd.read_sql_query("SELECT * FROM master_inventory", conn)
+            
+            if central_df.empty:
+                st.info("No books in central warehouse stock.")
+            else:
+                st.dataframe(central_df, use_container_width=True)
+                
+                # Delete Master Book Option
+                with st.expander("🗑️ Delete Book Title from Central Storage"):
+                    del_book_title = st.selectbox(
+                        "Select Book Title to Delete permanently from Master Stock:",
+                        central_df["book_title"].tolist(),
+                        key="del_master_select"
+                    )
+                    if st.button("Delete Master Book Title", type="primary"):
+                        c.execute("DELETE FROM master_inventory WHERE book_title = ?", (del_book_title,))
+                        conn.commit()
+                        st.success(f"Deleted '{del_book_title}' from central warehouse!")
+                        st.rerun()
 
         # TAB 2: Dispatched Log
         with tab2:
             st.subheader("Manage Dispatched Inventory")
             
-            # Query rowid explicitly as 'id' so older schema variations won't throw KeyError
             dispatched_df = pd.read_sql_query(
                 "SELECT rowid AS id, school_name, book_title, quantity_received, status FROM school_inventory", conn
             )
@@ -239,7 +255,7 @@ if role == "Custodian View":
                 st.info("No dispatched inventory records found.")
             else:
                 col_sch, col_bk, col_qty, col_st, col_act = st.columns(
-                    [2.5, 3, 1.5, 1.5, 2]
+                    [2.5, 2.5, 1.5, 1.2, 2.3]
                 )
                 col_sch.markdown("**School Name**")
                 col_bk.markdown("**Book Allocated**")
@@ -256,7 +272,7 @@ if role == "Custodian View":
                     r_status = row["status"]
 
                     c_sch, c_bk, c_qty, c_st, c_act = st.columns(
-                        [2.5, 3, 1.5, 1.5, 2]
+                        [2.5, 2.5, 1.5, 1.2, 2.3]
                     )
 
                     c_sch.write(f"**{r_school}**")
@@ -275,7 +291,7 @@ if role == "Custodian View":
                     else:
                         c_st.markdown("🟡 **Pending**")
 
-                    btn_col1, btn_col2 = c_act.columns(2)
+                    btn_col1, btn_col2, btn_col3 = c_act.columns([1, 1.2, 1])
 
                     if updated_qty != r_qty:
                         if btn_col1.button("💾 Save", key=f"save_{r_id}"):
@@ -299,8 +315,56 @@ if role == "Custodian View":
                             )
                             st.rerun()
 
-        # TAB 3: BOOK TITLE DISTRIBUTION TRACKER
+                    # Direct Delete Row Button
+                    if btn_col3.button("🗑️", key=f"del_row_{r_id}", help="Delete this entry"):
+                        c.execute("DELETE FROM school_inventory WHERE rowid = ?", (r_id,))
+                        conn.commit()
+                        st.success("Deleted record!")
+                        st.rerun()
+
+        # TAB 3: DELETE INVENTORY MENU
         with tab3:
+            st.subheader("🗑️ Delete Inventory Records")
+            st.write("Manage or wipe specific dispatched records from the system.")
+
+            dispatched_df = pd.read_sql_query(
+                "SELECT rowid AS id, school_name, book_title, quantity_received, status FROM school_inventory", conn
+            )
+
+            if dispatched_df.empty:
+                st.info("No dispatched inventory available to delete.")
+            else:
+                d_col1, d_col2 = st.columns(2)
+
+                # Option A: Delete Single Record
+                with d_col1:
+                    st.markdown("### Delete Specific Entry")
+                    records = [
+                        f"ID {r['id']} - {r['school_name']} | {r['book_title']} ({r['quantity_received']} copies)"
+                        for _, r in dispatched_df.iterrows()
+                    ]
+                    selected_record = st.selectbox("Select Record to Delete:", records, key="del_single_select")
+
+                    if st.button("Delete Selected Record", type="primary", key="btn_del_single"):
+                        record_id = int(selected_record.split(" ")[1])
+                        c.execute("DELETE FROM school_inventory WHERE rowid = ?", (record_id,))
+                        conn.commit()
+                        st.success(f"Record ID {record_id} deleted successfully!")
+                        st.rerun()
+
+                # Option B: Delete All Records for a Selected School
+                with d_col2:
+                    st.markdown("### Clear All Records for a School")
+                    del_school = st.selectbox("Select School to Wipe Dispatches:", SCHOOL_LIST, key="del_school_select")
+
+                    if st.button(f"Clear All Records for {del_school}", type="primary", key="btn_del_school"):
+                        c.execute("DELETE FROM school_inventory WHERE TRIM(school_name) = TRIM(?)", (del_school,))
+                        conn.commit()
+                        st.success(f"All dispatched records for '{del_school}' cleared!")
+                        st.rerun()
+
+        # TAB 4: BOOK TITLE DISTRIBUTION TRACKER
+        with tab4:
             st.subheader("📖 Book Title Distribution Tracker")
 
             master_df = pd.read_sql_query(
@@ -353,8 +417,8 @@ if role == "Custodian View":
                     else:
                         st.dataframe(book_dispatches, use_container_width=True)
 
-        # TAB 4: Appointments / Messages
-        with tab4:
+        # TAB 5: Appointments / Messages
+        with tab5:
             appointments_df = pd.read_sql_query(
                 "SELECT school_name AS 'School', date AS 'Requested Date', message AS 'Message / Reason', timestamp AS 'Sent At' FROM appointments ORDER BY id DESC",
                 conn,
@@ -377,7 +441,6 @@ else:
 
     selected_school = st.selectbox("Select Your School:", SCHOOL_LIST)
 
-    # Cleaned query using TRIM and GROUP BY so all dispatched books show up accurately
     school_df = pd.read_sql_query(
         """SELECT 
             book_title AS 'Book Title', 
@@ -391,53 +454,11 @@ else:
     )
 
     st.subheader(f"📦 Incoming / Assigned Books for {selected_school}")
-    
     if school_df.empty:
         st.info(
             "ℹ️ No dispatches logged for this school yet.\n\n"
             "**Note for Custodians:** Books added to Central Storage only appear here AFTER clicking **'Dispatch'** or **'Batch Dispatch All'**."
         )
-    else:
-        st.dataframe(school_df, use_container_width=True)
-
-    st.divider()
-
-    # SCHEDULE AN APPOINTMENT / MESSAGE SECTION
-    st.subheader("📅 Schedule an Appointment / Message Custodian")
-    st.write(
-        "Need to pick up books, make a request, or schedule a meeting? Send a message below."
-    )
-
-    with st.form("appointment_form"):
-        appt_date = st.date_input("Preferred Appointment Date")
-        message = st.text_area(
-            "Message / Notes for Custodian",
-            placeholder="e.g., Requesting to pick up 30 extra Grade 3 Science books this Thursday at 10:00 AM.",
-        )
-        submit_appt = st.form_submit_button("Send Request to Custodian")
-
-        if submit_appt:
-            if message.strip() == "":
-                st.warning("Please enter a message before sending.")
-            else:
-                c.execute(
-                    "INSERT INTO appointments (school_name, date, message) VALUES (?, ?, ?)",
-                    (selected_school, str(appt_date), message.strip()),
-                )
-                conn.commit()
-                st.success(
-                    "Your appointment request/message has been sent to the Custodian!"
-                )
-
-    school_df = pd.read_sql_query(
-        "SELECT book_title AS 'Book Title', quantity_received AS 'Quantity Allocated', status AS 'Status' FROM school_inventory WHERE school_name = ?",
-        conn,
-        params=(selected_school,),
-    )
-
-    st.subheader(f"Incoming / Assigned Books for {selected_school}")
-    if school_df.empty:
-        st.info("No dispatches logged for this school yet.")
     else:
         st.dataframe(school_df, use_container_width=True)
 
