@@ -2,17 +2,19 @@ import sqlite3
 import pandas as pd
 import streamlit as st
 
-# --- DATABASE SETUP (SAFE SETUP) ---
+# ==========================================
+# 1. DATABASE SETUP (SAFE INITIALIZATION)
+# ==========================================
 conn = sqlite3.connect("inventory.db", check_same_thread=False)
 c = conn.cursor()
 
-# 1. Master stock table
+# Master stock table
 c.execute(
     """CREATE TABLE IF NOT EXISTS master_inventory 
        (book_title TEXT PRIMARY KEY, central_stock INTEGER)"""
 )
 
-# 2. School inventory table
+# School inventory table
 c.execute(
     """CREATE TABLE IF NOT EXISTS school_inventory 
        (id INTEGER PRIMARY KEY AUTOINCREMENT, 
@@ -22,7 +24,7 @@ c.execute(
         status TEXT)"""
 )
 
-# 3. Appointments table
+# Appointments table
 c.execute(
     """CREATE TABLE IF NOT EXISTS appointments 
        (id INTEGER PRIMARY KEY AUTOINCREMENT, 
@@ -34,7 +36,9 @@ c.execute(
 
 conn.commit()
 
-# --- PRESET SCHOOL LIST ---
+# ==========================================
+# 2. PRESET SCHOOL LIST & PAGE CONFIG
+# ==========================================
 SCHOOL_LIST = [
     "Arcaflor Maniapao ES",
     "Balabag ES",
@@ -54,7 +58,6 @@ SCHOOL_LIST = [
     "Ruparan ES",
 ]
 
-# --- APP LAYOUT ---
 st.set_page_config(page_title="District Book Inventory", layout="wide")
 st.title("📚 District Book Inventory Tracker")
 
@@ -62,7 +65,7 @@ st.title("📚 District Book Inventory Tracker")
 role = st.sidebar.radio("Select View:", ["Principal View", "Custodian View"])
 
 # ==========================================
-# CUSTODIAN VIEW (PROTECTED)
+# 3. CUSTODIAN VIEW (PROTECTED)
 # ==========================================
 if role == "Custodian View":
     st.header("🔒 Custodian Control Panel")
@@ -77,7 +80,7 @@ if role == "Custodian View":
 
         col1, col2 = st.columns([1, 2])
 
-        # 1. Add new books to central storage
+        # --- A. ADD NEW BOOKS TO CENTRAL STORAGE ---
         with col1:
             st.subheader("Add / Update Central Stock")
             with st.form("add_book_form"):
@@ -97,7 +100,7 @@ if role == "Custodian View":
                     st.success(f"Added {stock} copies of '{title}'!")
                     st.rerun()
 
-        # 2. DISPATCH BOOKS GRID
+        # --- B. DISPATCH BOOKS GRID (WITH LIVE MONITORING) ---
         with col2:
             st.subheader("Dispatch Books to Schools")
             master_df = pd.read_sql_query(
@@ -122,16 +125,23 @@ if role == "Custodian View":
                     "⚡ Batch Dispatch All", type="primary", use_container_width=True
                 )
 
+                # Fetch current warehouse stock
+                current_stock = master_df.loc[
+                    master_df["book_title"] == selected_book,
+                    "central_stock",
+                ].values[0]
+
+                live_total_requested = 0
+                dispatch_selections = []
+
                 st.divider()
 
-                # Table Header (3 Columns: School, Quantity, Action)
+                # Table Header
                 h1, h2, h3 = st.columns([4, 2, 2])
                 h1.markdown("**School Name**")
                 h2.markdown("**Quantity**")
                 h3.markdown("**Action**")
                 st.divider()
-
-                dispatch_selections = []
 
                 for idx, school in enumerate(SCHOOL_LIST):
                     c1, c2, c3 = st.columns([4, 2, 2])
@@ -142,9 +152,12 @@ if role == "Custodian View":
                         min_value=1,
                         step=1,
                         value=10,
-                        key=f"dispatch_qty_{idx}",
+                        key=f"dispatch_qty_{selected_book}_{idx}",
                         label_visibility="collapsed",
                     )
+
+                    # Dynamic Monitoring Accumulator
+                    live_total_requested += qty
 
                     dispatch_selections.append(
                         {
@@ -155,11 +168,6 @@ if role == "Custodian View":
 
                     # Individual Dispatch Button
                     if c3.button("Dispatch", key=f"dispatch_btn_{idx}"):
-                        current_stock = master_df.loc[
-                            master_df["book_title"] == selected_book,
-                            "central_stock",
-                        ].values[0]
-
                         if qty > current_stock:
                             st.error(
                                 f"Not enough stock! Only {current_stock} available."
@@ -179,17 +187,26 @@ if role == "Custodian View":
                             )
                             st.rerun()
 
+                # LIVE MONITORING METRICS BANNER
+                st.divider()
+                m1, m2, m3 = st.columns(3)
+                m1.metric("📦 Warehouse Available Stock", current_stock)
+                m2.metric("📋 Live Input Total (All Schools)", live_total_requested)
+
+                remaining_after_batch = current_stock - live_total_requested
+                if remaining_after_batch >= 0:
+                    m3.metric("🟢 Stock Remaining After Batch", remaining_after_batch)
+                else:
+                    m3.metric("🔴 Stock Deficit", remaining_after_batch, delta_color="inverse")
+                    st.error(
+                        f"⚠️ Warning: Total input quantity ({live_total_requested}) exceeds available stock ({current_stock}) by {abs(remaining_after_batch)} books!"
+                    )
+
                 # BATCH DISPATCH ALL LOGIC
                 if dispatch_all_btn:
-                    total_req = sum(item["qty"] for item in dispatch_selections)
-                    current_stock = master_df.loc[
-                        master_df["book_title"] == selected_book,
-                        "central_stock",
-                    ].values[0]
-
-                    if total_req > current_stock:
+                    if live_total_requested > current_stock:
                         st.error(
-                            f"Cannot batch dispatch! Required `{total_req}` copies of **{selected_book}**, but only `{current_stock}` available in central stock."
+                            f"Cannot batch dispatch! Required `{live_total_requested}` copies of **{selected_book}**, but only `{current_stock}` available in central stock."
                         )
                     else:
                         for item in dispatch_selections:
@@ -203,13 +220,13 @@ if role == "Custodian View":
                             )
                         conn.commit()
                         st.success(
-                            f"Successfully batch dispatched **{selected_book}** ({total_req} total copies) to all {len(SCHOOL_LIST)} schools!"
+                            f"Successfully batch dispatched **{selected_book}** ({live_total_requested} total copies) to all {len(SCHOOL_LIST)} schools!"
                         )
                         st.rerun()
 
         st.divider()
 
-        # Display Data Tabs
+        # --- C. DATA & MANAGEMENT TABS ---
         tab1, tab2, tab3, tab4, tab5 = st.tabs(
             [
                 "📊 Central Warehouse Stock",
@@ -224,31 +241,36 @@ if role == "Custodian View":
         with tab1:
             st.subheader("📊 Central Warehouse Stock")
             central_df = pd.read_sql_query("SELECT * FROM master_inventory", conn)
-            
+
             if central_df.empty:
                 st.info("No books in central warehouse stock.")
             else:
                 st.dataframe(central_df, use_container_width=True)
-                
-                # Delete Master Book Option
+
                 with st.expander("🗑️ Delete Book Title from Central Storage"):
                     del_book_title = st.selectbox(
                         "Select Book Title to Delete permanently from Master Stock:",
                         central_df["book_title"].tolist(),
-                        key="del_master_select"
+                        key="del_master_select",
                     )
                     if st.button("Delete Master Book Title", type="primary"):
-                        c.execute("DELETE FROM master_inventory WHERE book_title = ?", (del_book_title,))
+                        c.execute(
+                            "DELETE FROM master_inventory WHERE book_title = ?",
+                            (del_book_title,),
+                        )
                         conn.commit()
-                        st.success(f"Deleted '{del_book_title}' from central warehouse!")
+                        st.success(
+                            f"Deleted '{del_book_title}' from central warehouse!"
+                        )
                         st.rerun()
 
         # TAB 2: Dispatched Log
         with tab2:
             st.subheader("Manage Dispatched Inventory")
-            
+
             dispatched_df = pd.read_sql_query(
-                "SELECT rowid AS id, school_name, book_title, quantity_received, status FROM school_inventory", conn
+                "SELECT rowid AS id, school_name, book_title, quantity_received, status FROM school_inventory",
+                conn,
             )
 
             if dispatched_df.empty:
@@ -315,20 +337,23 @@ if role == "Custodian View":
                             )
                             st.rerun()
 
-                    # Direct Delete Row Button
                     if btn_col3.button("🗑️", key=f"del_row_{r_id}", help="Delete this entry"):
-                        c.execute("DELETE FROM school_inventory WHERE rowid = ?", (r_id,))
+                        c.execute(
+                            "DELETE FROM school_inventory WHERE rowid = ?",
+                            (r_id,),
+                        )
                         conn.commit()
                         st.success("Deleted record!")
                         st.rerun()
 
-        # TAB 3: DELETE INVENTORY MENU
+        # TAB 3: Delete Inventory Menu
         with tab3:
             st.subheader("🗑️ Delete Inventory Records")
             st.write("Manage or wipe specific dispatched records from the system.")
 
             dispatched_df = pd.read_sql_query(
-                "SELECT rowid AS id, school_name, book_title, quantity_received, status FROM school_inventory", conn
+                "SELECT rowid AS id, school_name, book_title, quantity_received, status FROM school_inventory",
+                conn,
             )
 
             if dispatched_df.empty:
@@ -343,27 +368,39 @@ if role == "Custodian View":
                         f"ID {r['id']} - {r['school_name']} | {r['book_title']} ({r['quantity_received']} copies)"
                         for _, r in dispatched_df.iterrows()
                     ]
-                    selected_record = st.selectbox("Select Record to Delete:", records, key="del_single_select")
+                    selected_record = st.selectbox(
+                        "Select Record to Delete:", records, key="del_single_select"
+                    )
 
                     if st.button("Delete Selected Record", type="primary", key="btn_del_single"):
                         record_id = int(selected_record.split(" ")[1])
-                        c.execute("DELETE FROM school_inventory WHERE rowid = ?", (record_id,))
+                        c.execute(
+                            "DELETE FROM school_inventory WHERE rowid = ?",
+                            (record_id,),
+                        )
                         conn.commit()
                         st.success(f"Record ID {record_id} deleted successfully!")
                         st.rerun()
 
-                # Option B: Delete All Records for a Selected School
+                # Option B: Clear All Records for a School
                 with d_col2:
                     st.markdown("### Clear All Records for a School")
-                    del_school = st.selectbox("Select School to Wipe Dispatches:", SCHOOL_LIST, key="del_school_select")
+                    del_school = st.selectbox(
+                        "Select School to Wipe Dispatches:", SCHOOL_LIST, key="del_school_select"
+                    )
 
                     if st.button(f"Clear All Records for {del_school}", type="primary", key="btn_del_school"):
-                        c.execute("DELETE FROM school_inventory WHERE TRIM(school_name) = TRIM(?)", (del_school,))
+                        c.execute(
+                            "DELETE FROM school_inventory WHERE TRIM(school_name) = TRIM(?)",
+                            (del_school,),
+                        )
                         conn.commit()
-                        st.success(f"All dispatched records for '{del_school}' cleared!")
+                        st.success(
+                            f"All dispatched records for '{del_school}' cleared!"
+                        )
                         st.rerun()
 
-        # TAB 4: BOOK TITLE DISTRIBUTION TRACKER
+        # TAB 4: Track Inventory by Book Title
         with tab4:
             st.subheader("📖 Book Title Distribution Tracker")
 
@@ -434,13 +471,14 @@ if role == "Custodian View":
         st.info("Please enter the custodian password above to unlock controls.")
 
 # ==========================================
-# PRINCIPAL VIEW (PUBLIC)
+# 4. PRINCIPAL VIEW (PUBLIC)
 # ==========================================
 else:
     st.header("Principal Portal")
 
     selected_school = st.selectbox("Select Your School:", SCHOOL_LIST)
 
+    # Grouped query with TRIM to prevent missing books due to spaces
     school_df = pd.read_sql_query(
         """SELECT 
             book_title AS 'Book Title', 
@@ -464,7 +502,7 @@ else:
 
     st.divider()
 
-    # SCHEDULE AN APPOINTMENT / MESSAGE SECTION
+    # Schedule Appointment Section
     st.subheader("📅 Schedule an Appointment / Message Custodian")
     st.write(
         "Need to pick up books, make a request, or schedule a meeting? Send a message below."
