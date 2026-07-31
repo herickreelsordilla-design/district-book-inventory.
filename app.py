@@ -487,17 +487,18 @@ else:
     selected_school = st.selectbox("Select Your School:", SCHOOL_LIST)
 
     # Grouped query with TRIM to prevent missing books due to whitespace discrepancies
-    school_df = pd.read_sql_query(
-        """SELECT 
-            book_title AS 'Book Title', 
-            SUM(quantity_received) AS 'Total Quantity Allocated', 
-            status AS 'Status' 
-           FROM school_inventory 
-           WHERE TRIM(school_name) = TRIM(?)
-           GROUP BY book_title, status""",
-        conn,
-        params=(selected_school,),
-    )
+school_df = pd.read_sql_query(
+    """SELECT 
+        book_title AS 'Book Title', 
+        SUM(quantity_received) AS 'Total Quantity Allocated', 
+        status AS 'Status' 
+       FROM school_inventory 
+       WHERE TRIM(school_name) = TRIM(?)
+       GROUP BY book_title, status
+       ORDER BY book_title DESC""",
+    conn,
+    params=(selected_school,),
+)
 
     st.subheader(f"📦 Incoming / Assigned Books for {selected_school}")
     if school_df.empty:
