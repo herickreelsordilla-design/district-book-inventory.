@@ -1,43 +1,22 @@
-import sqlite3
+from datetime import datetime
 import pandas as pd
 import streamlit as st
+from streamlit_gsheets import GSheetsConnection
+
+st.set_page_config(page_title="District Book Inventory", layout="wide")
+st.title("📚 District Book Inventory Tracker")
 
 # ==========================================
-# 1. DATABASE SETUP (SAFE & PRESERVES YOUR DATA)
+# 1. CONNECT TO GOOGLE SHEETS
 # ==========================================
-conn = sqlite3.connect("inventory.db", check_same_thread=False)
-c = conn.cursor()
+conn = st.connection("gsheets", type=GSheetsConnection)
 
-# Master stock table
-c.execute(
-    """CREATE TABLE IF NOT EXISTS master_inventory 
-       (book_title TEXT PRIMARY KEY, central_stock INTEGER)"""
-)
-
-# School inventory table
-c.execute(
-    """CREATE TABLE IF NOT EXISTS school_inventory 
-       (id INTEGER PRIMARY KEY AUTOINCREMENT, 
-        school_name TEXT, 
-        book_title TEXT, 
-        quantity_received INTEGER, 
-        status TEXT)"""
-)
-
-# Appointments table
-c.execute(
-    """CREATE TABLE IF NOT EXISTS appointments 
-       (id INTEGER PRIMARY KEY AUTOINCREMENT, 
-        school_name TEXT, 
-        date TEXT, 
-        message TEXT, 
-        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)"""
-)
-
-conn.commit()
+# Helper function to read a tab
+def load_data(worksheet_name):
+    return conn.read(worksheet=worksheet_name, ttl=0)
 
 # ==========================================
-# 2. PRESET SCHOOL LIST & PAGE CONFIG
+# 2. PRESET SCHOOL LIST
 # ==========================================
 SCHOOL_LIST = [
     "Arcaflor Maniapao ES",
@@ -58,22 +37,17 @@ SCHOOL_LIST = [
     "Ruparan ES",
 ]
 
-st.set_page_config(page_title="District Book Inventory", layout="wide")
-st.title("📚 District Book Inventory Tracker")
-
 # Sidebar navigation
 role = st.sidebar.radio("Select View:", ["Principal View", "Custodian View"])
 
 # ==========================================
-# 3. CUSTODIAN VIEW (PROTECTED)
+# 3. CUSTODIAN VIEW
 # ==========================================
 if role == "Custodian View":
     st.header("🔒 Custodian Control Panel")
 
-    password = st.text_input(
-        "Enter Custodian Password to Access:", type="password"
-    )
-    CUSTODIAN_PASSWORD = "admin123"  # Change this password as needed
+    password = st.text_input("Enter Custodian Password to Access:", type="password")
+    CUSTODIAN_PASSWORD = "admin123"
 
     if password == CUSTODIAN_PASSWORD:
         st.success("Access Granted!")
@@ -85,62 +59,40 @@ if role == "Custodian View":
             st.subheader("Add / Update Central Stock")
             with st.form("add_book_form"):
                 title = st.text_input("Book Title")
-                stock = st.number_input(
-                    "Quantity to Add", min_value=1, step=1, value=100
-                )
+                stock = st.number_input("Quantity to Add", min_value=1, step=1, value=100)
                 submit = st.form_submit_button("Add to Master Stock")
 
                 if submit and title:
-                    c.execute(
-                        "INSERT INTO master_inventory (book_title, central_stock) VALUES (?, ?) "
-                        "ON CONFLICT(book_title) DO UPDATE SET central_stock = central_stock + ?",
-                        (title.strip(), stock, stock),
-                    )
-                    conn.commit()
-                    st.success(f"Added {stock} copies of '{title}'!")
+                    master_df = load_data("master_inventory")
+                    title_clean = title.strip()
+
+                    if not master_df.empty and title_clean in master_df["book_title"].values:
+                        master_df.loc[master_df["book_title"] == title_clean, "central_stock"] += stock
+                    else:
+                        new_row = pd.DataFrame([{"book_title": title_clean, "central_stock": stock}])
+                        master_df = pd.concat([master_df, new_row], ignore_index=True)
+
+                    conn.update(worksheet="master_inventory", data=master_df)
+                    st.success(f"Added {stock} copies of '{title_clean}'!")
                     st.rerun()
 
-        # --- B. DISPATCH BOOKS GRID (FIXED QUANTITY PRESERVATION) ---
+        # --- B. DISPATCH BOOKS GRID ---
         with col2:
             st.subheader("Dispatch Books to Schools")
-            master_df = pd.read_sql_query(
-                "SELECT * FROM master_inventory ORDER BY book_title DESC", conn
-            )
+            master_df = load_data("master_inventory")
 
             if master_df.empty:
-                st.info(
-                    "Please add books to Central Stock first before dispatching."
-                )
+                st.info("Please add books to Central Stock first before dispatching.")
             else:
+                master_df = master_df.sort_values(by="book_title", ascending=False)
                 book_options = master_df["book_title"].tolist()
 
-                # MAIN DROP BAR TO SELECT BOOK TITLE
                 m_col1, m_col2 = st.columns([3, 1])
-                selected_book = m_col1.selectbox(
-                    "📖 Select Book Title to Dispatch:",
-                    book_options,
-                    key="dispatch_book_select",
-                )
-                dispatch_all_btn = m_col2.button(
-                    "⚡ Batch Dispatch All",
-                    type="primary",
-                    use_container_width=True,
-                    key="batch_dispatch_btn",
-                )
+                selected_book = m_col1.selectbox("📖 Select Book Title to Dispatch:", book_options)
+                dispatch_all_btn = m_col2.button("⚡ Batch Dispatch All", type="primary", use_container_width=True)
 
-                # Fetch current warehouse stock
-                current_stock = master_df.loc[
-                    master_df["book_title"] == selected_book,
-                    "central_stock",
-                ].values[0]
+                current_stock = int(master_df.loc[master_df["book_title"] == selected_book, "central_stock"].values[0])
 
-                st.divider()
-
-                # Table Header
-                h1, h2, h3 = st.columns([4, 2, 2])
-                h1.markdown("**School Name**")
-                h2.markdown("**Quantity**")
-                h3.markdown("**Action**")
                 st.divider()
 
                 live_total_requested = 0
@@ -151,8 +103,6 @@ if role == "Custodian View":
                     c1.write(f"**{school}**")
 
                     input_key = f"dispatch_qty_{selected_book}_{idx}"
-
-                    # Keep default encoded value persistent in session state
                     if input_key not in st.session_state:
                         st.session_state[input_key] = 10
 
@@ -163,375 +113,113 @@ if role == "Custodian View":
                         key=input_key,
                         label_visibility="collapsed",
                     )
-
                     live_total_requested += qty
-
-                    dispatch_selections.append(
-                        {
-                            "school": school,
-                            "qty": qty,
-                        }
-                    )
+                    dispatch_selections.append({"school": school, "qty": qty})
 
                     if c3.button("Dispatch", key=f"dispatch_btn_{selected_book}_{idx}"):
                         if qty > current_stock:
-                            st.error(
-                                f"Not enough stock! Only {current_stock} available."
-                            )
+                            st.error(f"Not enough stock! Only {current_stock} available.")
                         else:
-                            c.execute(
-                                "UPDATE master_inventory SET central_stock = central_stock - ? WHERE book_title = ?",
-                                (qty, selected_book),
-                            )
-                            c.execute(
-                                "INSERT INTO school_inventory (school_name, book_title, quantity_received, status) VALUES (?, ?, ?, 'Pending')",
-                                (school, selected_book, qty),
-                            )
-                            conn.commit()
-                            st.success(
-                                f"Dispatched {qty} copies of '{selected_book}' to {school}!"
-                            )
+                            # Update master inventory stock
+                            master_df.loc[master_df["book_title"] == selected_book, "central_stock"] -= qty
+                            conn.update(worksheet="master_inventory", data=master_df)
+
+                            # Append to school inventory
+                            school_df = load_data("school_inventory")
+                            new_dispatch = pd.DataFrame([{
+                                "school_name": school,
+                                "book_title": selected_book,
+                                "quantity_received": qty,
+                                "status": "Pending"
+                            }])
+                            school_df = pd.concat([school_df, new_dispatch], ignore_index=True)
+                            conn.update(worksheet="school_inventory", data=school_df)
+
+                            st.success(f"Dispatched {qty} copies of '{selected_book}' to {school}!")
                             st.rerun()
 
-                # LIVE MONITORING METRICS BANNER
                 st.divider()
                 m1, m2, m3 = st.columns(3)
                 m1.metric("📦 Warehouse Stock Available", current_stock)
                 m2.metric("📋 Total Input (All Schools)", live_total_requested)
+                m3.metric("🟢 Remaining Stock After Batch", current_stock - live_total_requested)
 
-                remaining_after_batch = current_stock - live_total_requested
-                if remaining_after_batch >= 0:
-                    m3.metric("🟢 Remaining Stock After Batch", remaining_after_batch)
-                else:
-                    m3.metric("🔴 Stock Deficit", remaining_after_batch, delta_color="inverse")
-                    st.error(
-                        f"⚠️ Warning: Total requested quantity ({live_total_requested}) exceeds available warehouse stock ({current_stock}) by {abs(remaining_after_batch)} books!"
-                    )
-
-                # BATCH DISPATCH ALL LOGIC
                 if dispatch_all_btn:
                     if live_total_requested > current_stock:
-                        st.error(
-                            f"Cannot batch dispatch! Required `{live_total_requested}` copies of **{selected_book}**, but only `{current_stock}` available in central stock."
-                        )
+                        st.error(f"Cannot batch dispatch! Required `{live_total_requested}` copies, but only `{current_stock}` available.")
                     else:
-                        for item in dispatch_selections:
-                            c.execute(
-                                "UPDATE master_inventory SET central_stock = central_stock - ? WHERE book_title = ?",
-                                (item["qty"], selected_book),
-                            )
-                            c.execute(
-                                "INSERT INTO school_inventory (school_name, book_title, quantity_received, status) VALUES (?, ?, ?, 'Pending')",
-                                (item["school"], selected_book, item["qty"]),
-                            )
-                        conn.commit()
-                        st.success(
-                            f"Successfully batch dispatched **{selected_book}** ({live_total_requested} total copies) to all {len(SCHOOL_LIST)} schools!"
-                        )
+                        master_df.loc[master_df["book_title"] == selected_book, "central_stock"] -= live_total_requested
+                        conn.update(worksheet="master_inventory", data=master_df)
+
+                        school_df = load_data("school_inventory")
+                        new_rows = pd.DataFrame([
+                            {
+                                "school_name": item["school"],
+                                "book_title": selected_book,
+                                "quantity_received": item["qty"],
+                                "status": "Pending"
+                            } for item in dispatch_selections
+                        ])
+                        school_df = pd.concat([school_df, new_rows], ignore_index=True)
+                        conn.update(worksheet="school_inventory", data=school_df)
+
+                        st.success(f"Successfully batch dispatched **{selected_book}** to all schools!")
                         st.rerun()
 
         st.divider()
 
         # --- C. DATA & MANAGEMENT TABS ---
-        tab1, tab2, tab3, tab4, tab5 = st.tabs(
-            [
-                "📊 Central Warehouse Stock",
-                "🚚 Dispatched Inventory Log",
-                "🗑️ Delete Inventory",
-                "📖 Track Inventory by Title",
-                "📅 Scheduled Appointments / Messages",
-            ]
-        )
+        tab1, tab2, tab3 = st.tabs(["📊 Central Warehouse Stock", "🚚 Dispatched Inventory Log", "📅 Scheduled Appointments"])
 
-        # TAB 1: Warehouse Stock
         with tab1:
-            st.subheader("📊 Central Warehouse Stock")
-            central_df = pd.read_sql_query("SELECT * FROM master_inventory ORDER BY book_title DESC", conn)
+            central_df = load_data("master_inventory")
+            if not central_df.empty:
+                st.dataframe(central_df.sort_values(by="book_title", ascending=False), use_container_width=True)
 
-            if central_df.empty:
-                st.info("No books in central warehouse stock.")
-            else:
-                st.dataframe(central_df, use_container_width=True)
-
-                with st.expander("🗑️ Delete Book Title from Central Storage"):
-                    del_book_title = st.selectbox(
-                        "Select Book Title to Delete permanently from Master Stock:",
-                        central_df["book_title"].tolist(),
-                        key="del_master_select",
-                    )
-                    if st.button("Delete Master Book Title", type="primary", key="btn_del_master_title"):
-                        c.execute(
-                            "DELETE FROM master_inventory WHERE book_title = ?",
-                            (del_book_title,),
-                        )
-                        conn.commit()
-                        st.success(
-                            f"Deleted '{del_book_title}' from central warehouse!"
-                        )
-                        st.rerun()
-
-        # TAB 2: Dispatched Log
         with tab2:
-            st.subheader("Manage Dispatched Inventory")
+            dispatched_df = load_data("school_inventory")
+            if not dispatched_df.empty:
+                st.dataframe(dispatched_df.sort_values(by="book_title", ascending=False), use_container_width=True)
 
-            dispatched_df = pd.read_sql_query(
-                "SELECT rowid AS id, school_name, book_title, quantity_received, status FROM school_inventory ORDER BY book_title DESC",
-                conn,
-            )
-
-            if dispatched_df.empty:
-                st.info("No dispatched inventory records found.")
-            else:
-                col_sch, col_bk, col_qty, col_st, col_act = st.columns(
-                    [2.5, 2.5, 1.5, 1.2, 2.3]
-                )
-                col_sch.markdown("**School Name**")
-                col_bk.markdown("**Book Allocated**")
-                col_qty.markdown("**Quantity / Edit**")
-                col_st.markdown("**Status**")
-                col_act.markdown("**Actions**")
-                st.divider()
-
-                for index, row in dispatched_df.iterrows():
-                    r_id = row["id"]
-                    r_school = row["school_name"]
-                    r_book = row["book_title"]
-                    r_qty = row["quantity_received"]
-                    r_status = row["status"]
-
-                    c_sch, c_bk, c_qty, c_st, c_act = st.columns(
-                        [2.5, 2.5, 1.5, 1.2, 2.3]
-                    )
-
-                    c_sch.write(f"**{r_school}**")
-                    c_bk.write(r_book)
-
-                    updated_qty = c_qty.number_input(
-                        f"Qty {r_id}",
-                        min_value=1,
-                        value=int(r_qty),
-                        key=f"edit_qty_{r_id}",
-                        label_visibility="collapsed",
-                    )
-
-                    if r_status == "Received":
-                        c_st.markdown("🟢 **Received**")
-                    else:
-                        c_st.markdown("🟡 **Pending**")
-
-                    btn_col1, btn_col2, btn_col3 = c_act.columns([1, 1.2, 1])
-
-                    if updated_qty != r_qty:
-                        if btn_col1.button("💾 Save", key=f"save_{r_id}"):
-                            c.execute(
-                                "UPDATE school_inventory SET quantity_received = ? WHERE rowid = ?",
-                                (updated_qty, r_id),
-                            )
-                            conn.commit()
-                            st.success("Updated record!")
-                            st.rerun()
-
-                    if r_status == "Pending":
-                        if btn_col2.button("Received", key=f"rec_{r_id}"):
-                            c.execute(
-                                "UPDATE school_inventory SET status = 'Received' WHERE rowid = ?",
-                                (r_id,),
-                            )
-                            conn.commit()
-                            st.success(
-                                f"Marked '{r_book}' for {r_school} as Received!"
-                            )
-                            st.rerun()
-
-                    if btn_col3.button("🗑️", key=f"del_row_{r_id}", help="Delete this entry"):
-                        c.execute(
-                            "DELETE FROM school_inventory WHERE rowid = ?",
-                            (r_id,),
-                        )
-                        conn.commit()
-                        st.success("Deleted record!")
-                        st.rerun()
-
-        # TAB 3: Delete Inventory Menu
         with tab3:
-            st.subheader("🗑️ Delete Inventory Records")
-            st.write("Manage or wipe specific dispatched records from the system.")
-
-            dispatched_df = pd.read_sql_query(
-                "SELECT rowid AS id, school_name, book_title, quantity_received, status FROM school_inventory ORDER BY book_title DESC",
-                conn,
-            )
-
-            if dispatched_df.empty:
-                st.info("No dispatched inventory available to delete.")
-            else:
-                d_col1, d_col2 = st.columns(2)
-
-                # Option A: Delete Single Record
-                with d_col1:
-                    st.markdown("### Delete Specific Entry")
-                    records = [
-                        f"ID {r['id']} - {r['school_name']} | {r['book_title']} ({r['quantity_received']} copies)"
-                        for _, r in dispatched_df.iterrows()
-                    ]
-                    selected_record = st.selectbox(
-                        "Select Record to Delete:", records, key="del_single_select"
-                    )
-
-                    if st.button("Delete Selected Record", type="primary", key="btn_del_single"):
-                        record_id = int(selected_record.split(" ")[1])
-                        c.execute(
-                            "DELETE FROM school_inventory WHERE rowid = ?",
-                            (record_id,),
-                        )
-                        conn.commit()
-                        st.success(f"Record ID {record_id} deleted successfully!")
-                        st.rerun()
-
-                # Option B: Clear All Records for a School
-                with d_col2:
-                    st.markdown("### Clear All Records for a School")
-                    del_school = st.selectbox(
-                        "Select School to Wipe Dispatches:", SCHOOL_LIST, key="del_school_select"
-                    )
-
-                    if st.button(f"Clear All Records for {del_school}", type="primary", key="btn_del_school"):
-                        c.execute(
-                            "DELETE FROM school_inventory WHERE TRIM(school_name) = TRIM(?)",
-                            (del_school,),
-                        )
-                        conn.commit()
-                        st.success(
-                            f"All dispatched records for '{del_school}' cleared!"
-                        )
-                        st.rerun()
-
-        # TAB 4: Track Inventory by Book Title
-        with tab4:
-            st.subheader("📖 Book Title Distribution Tracker")
-
-            master_df = pd.read_sql_query(
-                "SELECT * FROM master_inventory ORDER BY book_title DESC", conn
-            )
-
-            if master_df.empty:
-                st.info("No books registered in the master stock yet.")
-            else:
-                all_titles = master_df["book_title"].tolist()
-                selected_title = st.selectbox(
-                    "Select a Book Title to Track:",
-                    all_titles,
-                    key="track_book_select",
-                )
-
-                if selected_title:
-                    central_stock = master_df.loc[
-                        master_df["book_title"] == selected_title,
-                        "central_stock",
-                    ].values[0]
-
-                    book_dispatches = pd.read_sql_query(
-                        "SELECT school_name AS 'School Name', quantity_received AS 'Quantity', status AS 'Status' FROM school_inventory WHERE book_title = ?",
-                        conn,
-                        params=(selected_title,),
-                    )
-
-                    total_dispatched = (
-                        book_dispatches["Quantity"].sum()
-                        if not book_dispatches.empty
-                        else 0
-                    )
-
-                    m1, m2, m3 = st.columns(3)
-                    m1.metric("Central Warehouse Stock", central_stock)
-                    m2.metric("Total Dispatched to Schools", total_dispatched)
-                    m3.metric(
-                        "Total District Inventory",
-                        central_stock + total_dispatched,
-                    )
-
-                    st.divider()
-                    st.write(
-                        f"### School Breakdown for: **{selected_title}**"
-                    )
-
-                    if book_dispatches.empty:
-                        st.info("This book has not been dispatched to any schools yet.")
-                    else:
-                        st.dataframe(book_dispatches, use_container_width=True)
-
-        # TAB 5: Appointments / Messages
-        with tab5:
-            appointments_df = pd.read_sql_query(
-                "SELECT school_name AS 'School', date AS 'Requested Date', message AS 'Message / Reason', timestamp AS 'Sent At' FROM appointments ORDER BY id DESC",
-                conn,
-            )
+            appointments_df = load_data("appointments")
             if not appointments_df.empty:
                 st.dataframe(appointments_df, use_container_width=True)
-            else:
-                st.info("No appointment requests or messages yet.")
-
-    elif password != "":
-        st.error("Incorrect Password. Access Denied.")
-    else:
-        st.info("Please enter the custodian password above to unlock controls.")
 
 # ==========================================
-# 4. PRINCIPAL VIEW (PUBLIC - DEFAULT DESCENDING ORDER)
+# 4. PRINCIPAL VIEW
 # ==========================================
 else:
     st.header("Principal Portal")
-
     selected_school = st.selectbox("Select Your School:", SCHOOL_LIST)
 
-    # Sorts the table by Book Title DESCENDING by default
-    school_df = pd.read_sql_query(
-        """SELECT 
-            book_title AS 'Book Title', 
-            SUM(quantity_received) AS 'Total Quantity Allocated', 
-            status AS 'Status' 
-           FROM school_inventory 
-           WHERE TRIM(school_name) = TRIM(?)
-           GROUP BY book_title, status
-           ORDER BY book_title DESC""",
-        conn,
-        params=(selected_school,),
-    )
+    school_df = load_data("school_inventory")
 
-    st.subheader(f"📦 Incoming / Assigned Books for {selected_school}")
-    if school_df.empty:
-        st.info(
-            "ℹ️ No dispatches logged for this school yet.\n\n"
-            "**Note for Custodians:** Books added to Central Storage only appear here AFTER clicking **'Dispatch'** or **'Batch Dispatch All'**."
-        )
-    else:
-        st.dataframe(school_df, use_container_width=True)
+    if not school_df.empty:
+        filtered = school_df[school_df["school_name"].str.strip() == selected_school.strip()]
+        if not filtered.empty:
+            summary = filtered.groupby(["book_title", "status"])["quantity_received"].sum().reset_index()
+            summary = summary.sort_values(by="book_title", ascending=False)
+            st.dataframe(summary, use_container_width=True)
+        else:
+            st.info("No dispatches logged for this school yet.")
 
     st.divider()
-
-    # Schedule Appointment Section
     st.subheader("📅 Schedule an Appointment / Message Custodian")
-    st.write(
-        "Need to pick up books, make a request, or schedule a meeting? Send a message below."
-    )
 
     with st.form("appointment_form"):
         appt_date = st.date_input("Preferred Appointment Date")
-        message = st.text_area(
-            "Message / Notes for Custodian",
-            placeholder="e.g., Requesting to pick up 30 extra Grade 3 Science books this Thursday at 10:00 AM.",
-        )
+        message = st.text_area("Message / Notes for Custodian")
         submit_appt = st.form_submit_button("Send Request to Custodian")
 
-        if submit_appt:
-            if message.strip() == "":
-                st.warning("Please enter a message before sending.")
-            else:
-                c.execute(
-                    "INSERT INTO appointments (school_name, date, message) VALUES (?, ?, ?)",
-                    (selected_school, str(appt_date), message.strip()),
-                )
-                conn.commit()
-                st.success(
-                    "Your appointment request/message has been sent to the Custodian!"
-                )
+        if submit_appt and message.strip():
+            appt_df = load_data("appointments")
+            new_appt = pd.DataFrame([{
+                "school_name": selected_school,
+                "date": str(appt_date),
+                "message": message.strip(),
+                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            }])
+            appt_df = pd.concat([appt_df, new_appt], ignore_index=True)
+            conn.update(worksheet="appointments", data=appt_df)
+            st.success("Your request has been sent to the Custodian!")
